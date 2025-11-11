@@ -1,0 +1,3 @@
+Go is fun!
+File I/O is easy.
+Next up: JSON.
