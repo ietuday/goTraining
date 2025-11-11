@@ -1,0 +1,7109 @@
+Awesome — we’ll do this step-by-step, one focused topic at a time, with a small concept drill + a coding task you can actually run. Ready? 🙂
+
+# Step 1 — Strings, Slices & Runes (Unicode-safe thinking)
+
+## Must-know in Go
+
+* A `string` is **immutable** bytes (UTF-8). `len(s)` ⇒ **bytes**, not characters.
+* Iterating `for i, r := range s` gives byte index `i` and **rune** `r` (Unicode code point).
+* Convert to runes for character ops: `rs := []rune(s)`. Then `len(rs)` is characters (code points).
+* `[]byte` vs `[]rune`:
+
+  * `[]byte` == raw UTF-8; fast but unsafe for character slicing.
+  * `[]rune` == code points; safe for reversing/uppercasing by “characters”.
+* Slices: `var a []int` is **nil slice** (`len=0, cap=0`). `[]int{}` is **empty** (`len=0`) but non-nil.
+* Appending may reallocate; preallocate when size is known: `make([]T, 0, n)`.
+* `copy(dst, src)` copies **min(len(dst), len(src))**.
+
+## Micro-quiz (answer quickly in your head)
+
+1. `len("नमस्ते")` returns bytes, not characters — **True**
+2. `range` over a string yields runes — **True**
+3. `append` never reallocates — **False**
+
+---
+
+## Coding Task (easy → medium): Unicode-aware Palindrome
+
+**Write `IsPalindrome(s string) bool`** that returns true if `s` is a palindrome **by characters**, ignoring case and any non-alphanumeric characters. Must be **Unicode-aware** (e.g., “नयन”, “Åbba, ba!”).
+
+### Hints
+
+* Normalize by filtering with `unicode.IsLetter`/`unicode.IsDigit`.
+* Lowercase with `unicode.ToLower(r)`.
+* Work on `[]rune` (not bytes), then two-pointer compare.
+
+### Starter (you fill the function)
+
+```go
+package main
+
+import (
+	"fmt"
+	"unicode"
+)
+
+func IsPalindrome(s string) bool {
+	// 1) Build a []rune with only letters/digits, lowercased
+	// 2) Two-pointer check from both ends
+	return false
+}
+
+func main() {
+	tests := []struct{
+		in string
+		want bool
+	}{
+		{"racecar", true},
+		{"RaceCar", true},
+		{"Åbba, ba!", true},
+		{"नयन", true},
+		{"hello", false},
+		{"No 'x' in Nixon", true},
+	}
+
+	for _, t := range tests {
+		got := IsPalindrome(t.in)
+		fmt.Printf("%q -> %v (want %v)\n", t.in, got, t.want)
+	}
+}
+```
+
+### Edge cases to think about
+
+* Empty string / single character.
+* Mixed scripts and emoji (emoji won’t be filtered unless you decide to treat them as letters — fine either way, but be consistent).
+* Combining marks: code-point level is acceptable for interviews unless they ask for grapheme clusters.
+
+import "unicode"
+
+func IsPalindrome(s string) bool {
+	// Normalize: keep only letters/digits, lowercase, as runes.
+	buf := make([]rune, 0, len(s)) // cap in bytes; fine as an upper bound
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			buf = append(buf, unicode.ToLower(r))
+		}
+	}
+
+	// Two-pointer compare.
+	i, j := 0, len(buf)-1
+	for i < j {
+		if buf[i] != buf[j] {
+			return false
+		}
+		i++
+		j--
+	}
+	return true
+}
+
+awesome—Step 2 coming right up 🔧
+
+# Step 2 — Slice internals, capacity growth & common pitfalls
+
+## Must-know
+
+* A slice is a **header**: `(ptr, len, cap)` pointing to a backing array.
+* `len(s)` = visible elements; `cap(s)` = elements from start to array end.
+* `make([]T, len)` ⇒ `len==cap`. `make([]T, len, cap)` ⇒ separate len/cap.
+* `append` may **reallocate** to a new backing array when capacity is insufficient. If there’s room, it mutates in place and can affect other aliases of the same array.
+* Growth factor is **implementation detail** (roughly ~×2 at small sizes, then slower for large). Don’t code logic that depends on the exact factor.
+* `copy(dst, src)` copies `min(len(dst), len(src))` and is safe for overlapping regions.
+
+## Pitfalls to avoid
+
+1. **Aliasing surprise**
+
+```go
+a := []int{1,2,3}
+b := a[:2]         // shares backing array with a
+b = append(b, 99)  // if cap(b) allows, this overwrites a[2]!
+```
+
+Fix: force a new array before mutating:
+
+```go
+b = append([]int(nil), b...) // clone
+```
+
+2. **Sub-slice memory leaks**
+
+```go
+big := make([]byte, 10<<20) // 10MB
+view := big[9<<20:]         // tiny sub-slice, but holds 10MB alive
+```
+
+Fix: trim capacity by copying:
+
+```go
+view = append([]byte(nil), view...) // releases big array for GC
+```
+
+3. **Reslicing beyond capacity**
+
+```go
+s := make([]int, 0, 2)
+_ = s[:3] // panic: out of range
+```
+
+---
+
+## Micro-quiz (quick!)
+
+1. Does `append` always create a new array? **No**
+2. Will two slices of the same array see each other’s changes if there’s capacity overlap? **Yes**
+3. What does `copy(dst, src)` return? **Number of elements copied**
+
+---
+
+## Coding Task (medium): In-place rotate & safe pop
+
+### A) `RotateLeft(s []int, k int)` (in-place, O(n) time, O(1) space)
+
+Rotate the slice left by `k`. Example:
+`[1,2,3,4,5], k=2 → [3,4,5,1,2]`.
+
+**Hint:** Use the classic three-reversal trick:
+
+* reverse first `k`
+* reverse remaining `n-k`
+* reverse all
+
+### B) `PopFrontK[T any](s []T, k int) ([]T, []T)`
+
+Remove first `k` elements and **return (popped, rest)**, ensuring the returned `rest` does **not** keep the full old capacity (so the GC can free the front chunk’s array). That means you must **re-slice** and then **copy** to a fresh array.
+
+### Starters (fill the TODOs)
+
+```go
+package main
+
+import "fmt"
+
+// reverse s[l:r] in-place (r is exclusive)
+func reverse[T any](s []T, l, r int) {
+	for l < r-1 {
+		s[l], s[r-1] = s[r-1], s[l]
+		l++
+		r--
+	}
+}
+
+// A) RotateLeft: in-place, O(1) extra space
+func RotateLeft[T any](s []T, k int) {
+	n := len(s)
+	if n == 0 {
+		return
+	}
+	k %= n
+	if k == 0 {
+		return
+	}
+	// TODO: reverse(0,k), reverse(k,n), reverse(0,n)
+}
+
+// B) PopFrontK: returns popped, rest (with trimmed capacity)
+func PopFrontK[T any](s []T, k int) ([]T, []T) {
+	if k <= 0 {
+		// return empty popped and a TRIMMED copy of s
+		out := append([]T(nil), s...) // trims cap
+		return nil, out
+	}
+	if k >= len(s) {
+		// everything popped; rest is empty
+		popped := append([]T(nil), s...) // stable copy
+		return popped, nil
+	}
+	popped := append([]T(nil), s[:k]...) // copy popped for safety
+	restView := s[k:]                    // shares backing array — must trim!
+	rest := append([]T(nil), restView...) // force new array (releases old)
+	return popped, rest
+}
+
+func main() {
+	// quick manual checks
+	a := []int{1,2,3,4,5}
+	RotateLeft(a, 2)
+	fmt.Println(a) // expect [3 4 5 1 2]
+
+	popped, rest := PopFrontK([]int{10,20,30,40,50}, 2)
+	fmt.Println(popped, rest) // expect [10 20] [30 40 50]
+}
+```
+
+package main
+
+import "fmt"
+
+// reverse s[l:r] in-place (r exclusive)
+func reverse[T any](s []T, l, r int) {
+	for l < r-1 {
+		s[l], s[r-1] = s[r-1], s[l]
+		l++
+		r--
+	}
+}
+
+// A) RotateLeft: in-place, O(1) extra space
+func RotateLeft[T any](s []T, k int) {
+	n := len(s)
+	if n == 0 {
+		return
+	}
+	k %= n
+	if k == 0 {
+		return
+	}
+	reverse(s, 0, k)
+	reverse(s, k, n)
+	reverse(s, 0, n)
+}
+
+// B) PopFrontK: returns (popped, rest) with trimmed capacity
+func PopFrontK[T any](s []T, k int) ([]T, []T) {
+	if k <= 0 {
+		return nil, append([]T(nil), s...) // trim cap
+	}
+	if k >= len(s) {
+		return append([]T(nil), s...), nil
+	}
+	popped := append([]T(nil), s[:k]...)   // stable copy
+	rest := append([]T(nil), s[k:]...)     // force new array (releases old)
+	return popped, rest
+}
+
+func main() {
+	a := []int{1, 2, 3, 4, 5}
+	RotateLeft(a, 2)
+	fmt.Println(a) // [3 4 5 1 2]
+
+	popped, rest := PopFrontK([]int{10, 20, 30, 40, 50}, 2)
+	fmt.Println(popped, rest) // [10 20] [30 40 50]
+}
+
+
+sweet — Step 3 it is 🗺️
+
+# Step 3 — Maps (hashing, presence checks, concurrency, interview patterns)
+
+## Must-know
+
+* Zero value: `var m map[K]V` is **nil** (len=0). Reading is ok (returns zero of `V`), writing panics. Use `make(map[K]V, hintCap)`.
+* Presence check:
+
+  ```go
+  v, ok := m[key] // ok==true if key exists (even if v is V’s zero)
+  ```
+* Keys must be **comparable**: numbers, strings, bools, pointers, channels, interfaces (with comparable dynamic values), arrays, structs (all comparable fields). **Not allowed**: slices, maps, funcs.
+* Iteration order is **randomized**; never rely on it.
+* Delete: `delete(m, key)` (no-op if missing).
+* Maps are **not** concurrency-safe for writes. Protect with a **mutex** (or `sync.Map` for special cases like write-once/read-many).
+
+## Pitfalls
+
+1. Writing to a nil map:
+
+   ```go
+   var m map[string]int
+   m["x"] = 1 // panic
+   ```
+2. Map of slices must initialize the slice:
+
+   ```go
+   m := make(map[string][]int)
+   m["k"] = append(m["k"], 10) // ok; nil slice appended -> new slice stored back
+   ```
+3. Struct/map/slice as value: reads return a **copy** of struct, but slices/maps are references to underlying data—mutations through the returned value affect stored data.
+
+## Micro-quiz
+
+1. Does `delete(m,"x")` panic if the key doesn’t exist? **No**
+2. Can a struct with a `[]int` field be a map key? **No** (slice inside is not comparable)
+3. Do map iterations have a deterministic order? **No**
+
+---
+
+## Coding Task A (medium): Group Anagrams (Unicode-aware)
+
+**Signature:** `func GroupAnagrams(words []string) [][]string`
+Group words that are anagrams (case-insensitive). Use a **canonical key** by lowercasing and sorting runes.
+
+**Starter:**
+
+```go
+package main
+
+import (
+	"fmt"
+	"sort"
+	"unicode"
+)
+
+func canonicalKey(s string) string {
+	rs := make([]rune, 0, len(s))
+	for _, r := range s {
+		rs = append(rs, unicode.ToLower(r))
+	}
+	sort.Slice(rs, func(i, j int) bool { return rs[i] < rs[j] })
+	return string(rs)
+}
+
+func GroupAnagrams(words []string) [][]string {
+	buckets := make(map[string][]string)
+	for _, w := range words {
+		key := canonicalKey(w)
+		buckets[key] = append(buckets[key], w)
+	}
+	out := make([][]string, 0, len(buckets))
+	for _, grp := range buckets {
+		out = append(out, grp)
+	}
+	return out
+}
+
+func main() {
+	fmt.Println(GroupAnagrams([]string{"eat","Tea","ate","पेप","पेپ","tan","nat"}))
+}
+```
+
+*Note:* True grapheme normalization (NFC/NFD) needs `golang.org/x/text/unicode/norm`, usually overkill for interviews—this solution is acceptable unless they press on combining marks.
+
+---
+
+## Coding Task B (medium): Top-K Frequent Words
+
+**Signature:** `func TopK(words []string, k int) []string`
+Return the `k` most frequent words; tie-break lexicographically ascending.
+
+**Starter (min-heap):**
+
+```go
+package main
+
+import (
+	"container/heap"
+	"sort"
+)
+
+type item struct {
+	word string
+	freq int
+}
+// min-heap by (freq, reverse-lex) so we pop the worst
+type minHeap []item
+func (h minHeap) Len() int { return len(h) }
+func (h minHeap) Less(i, j int) bool {
+	if h[i].freq != h[j].freq { return h[i].freq < h[j].freq }
+	return h[i].word > h[j].word // reverse to eject lexicographically larger on tie
+}
+func (h minHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *minHeap) Push(x any)   { *h = append(*h, x.(item)) }
+func (h *minHeap) Pop() any     { old := *h; x := old[len(old)-1]; *h = old[:len(old)-1]; return x }
+
+func TopK(words []string, k int) []string {
+	if k <= 0 { return nil }
+	count := make(map[string]int)
+	for _, w := range words { count[w]++ }
+
+	h := &minHeap{}
+	heap.Init(h)
+	for w, c := range count {
+		heap.Push(h, item{w, c})
+		if h.Len() > k { heap.Pop(h) }
+	}
+	// extract in reverse: highest first
+	out := make([]string, h.Len())
+	for i := len(out)-1; i >= 0; i-- {
+		it := heap.Pop(h).(item)
+		out[i] = it.word
+	}
+	// final tie-break already enforced; optional stable sort if interviewer insists:
+	sort.SliceStable(out, func(i, j int) bool {
+		if count[out[i]] != count[out[j]] { return count[out[i]] > count[out[j]] }
+		return out[i] < out[j]
+	})
+	return out
+}
+```
+
+---
+
+## Coding Task C (easy): Thread-safe Counter
+
+**Goal:** implement `SafeCounter` supporting `Inc(key)` and `Load(key) int`, using a **mutex** (preferred) rather than `sync.Map` for mixed read/write.
+
+**Starter:**
+
+```go
+package main
+
+import "sync"
+
+type SafeCounter struct {
+	mu sync.RWMutex
+	m  map[string]int
+}
+
+func NewSafeCounter() *SafeCounter {
+	return &SafeCounter{m: make(map[string]int)}
+}
+
+func (c *SafeCounter) Inc(key string) {
+	c.mu.Lock()
+	c.m[key]++
+	c.mu.Unlock()
+}
+
+func (c *SafeCounter) Load(key string) int {
+	c.mu.RLock()
+	v := c.m[key] // ok: zero value if missing
+	c.mu.RUnlock()
+	return v
+}
+```
+
+---
+
+Here are polished reference solutions for all three:
+
+### A) Group Anagrams
+
+```go
+package main
+
+import (
+	"sort"
+	"unicode"
+)
+
+func canonicalKey(s string) string {
+	rs := make([]rune, 0, len(s))
+	for _, r := range s {
+		rs = append(rs, unicode.ToLower(r))
+	}
+	sort.Slice(rs, func(i, j int) bool { return rs[i] < rs[j] })
+	return string(rs)
+}
+
+func GroupAnagrams(words []string) [][]string {
+	buckets := make(map[string][]string, len(words))
+	for _, w := range words {
+		key := canonicalKey(w)
+		buckets[key] = append(buckets[key], w)
+	}
+	out := make([][]string, 0, len(buckets))
+	for _, grp := range buckets {
+		out = append(out, grp)
+	}
+	return out
+}
+```
+
+### B) Top-K Frequent Words
+
+```go
+package main
+
+import (
+	"container/heap"
+	"sort"
+)
+
+type item struct {
+	word string
+	freq int
+}
+
+type minHeap []item
+
+func (h minHeap) Len() int { return len(h) }
+func (h minHeap) Less(i, j int) bool {
+	if h[i].freq != h[j].freq {
+		return h[i].freq < h[j].freq // smaller freq is "worse"
+	}
+	return h[i].word > h[j].word // reverse lex so larger word is "worse"
+}
+func (h minHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *minHeap) Push(x any)        { *h = append(*h, x.(item)) }
+func (h *minHeap) Pop() any          { old := *h; x := old[len(old)-1]; *h = old[:len(old)-1]; return x }
+
+func TopK(words []string, k int) []string {
+	if k <= 0 {
+		return nil
+	}
+	count := make(map[string]int, len(words))
+	for _, w := range words {
+		count[w]++
+	}
+
+	h := &minHeap{}
+	heap.Init(h)
+	for w, c := range count {
+		heap.Push(h, item{w, c})
+		if h.Len() > k {
+			heap.Pop(h)
+		}
+	}
+
+	out := make([]string, h.Len())
+	for i := len(out) - 1; i >= 0; i-- {
+		it := heap.Pop(h).(item)
+		out[i] = it.word
+	}
+
+	// Ensure final tie-break: freq desc, lex asc.
+	sort.SliceStable(out, func(i, j int) bool {
+		if count[out[i]] != count[out[j]] {
+			return count[out[i]] > count[out[j]]
+		}
+		return out[i] < out[j]
+	})
+	return out
+}
+```
+
+### C) Thread-safe Counter
+
+```go
+package main
+
+import "sync"
+
+type SafeCounter struct {
+	mu sync.RWMutex
+	m  map[string]int
+}
+
+func NewSafeCounter() *SafeCounter {
+	return &SafeCounter{m: make(map[string]int)}
+}
+
+func (c *SafeCounter) Inc(key string) {
+	c.mu.Lock()
+	c.m[key]++
+	c.mu.Unlock()
+}
+
+func (c *SafeCounter) Load(key string) int {
+	c.mu.RLock()
+	v := c.m[key] // zero value if missing
+	c.mu.RUnlock()
+	return v
+}
+```
+
+Want to jump to **Step 4: interfaces & method sets (pointer vs value receivers, `io.Reader`/`io.Writer`, clean API design)**?
+
+
+
+
+awesome — Step 4 time ⚙️
+
+# Step 4 — Interfaces & Method Sets (pointer vs value), `io.Reader`/`io.Writer`, and nil traps
+
+## Must-know (tight version)
+
+* **Interface satisfaction is implicit.** If a type implements the methods, it satisfies the interface—no `implements` keyword.
+* **Method sets**:
+
+  * Value `T` has methods with **value receivers**.
+  * Pointer `*T` has methods with **both value and pointer receivers**.
+  * So a value `t T` does **not** satisfy an interface requiring a pointer-receiver method, but `&t` does.
+* **Nil interface vs typed nil**:
+
+  * `var err error = (*MyErr)(nil)` → interface is **non-nil** (type info present), even though the underlying pointer is nil.
+  * Prefer `return nil` (untyped nil) for “no error”.
+* **`io.Reader` / `io.Writer`** are tiny but powerful:
+
+  * `Read(p []byte) (n int, err error)` must return `n>0` **before** a non-nil `err` like `io.EOF`, when possible.
+  * `Write(p []byte) (n int, err error)` should write as much as possible; partial writes must return `n < len(p)` and a non-nil error.
+
+## Pitfalls
+
+* Returning a **typed nil** error (see above).
+* Assuming interface **nil checks** behave like pointer nil checks.
+* Mixing value/pointer receivers and then passing the wrong form to functions expecting an interface.
+
+---
+
+## Micro-quiz (quick)
+
+1. Does a value `t T` have pointer-receiver methods? **No.**
+2. Is `var x error = (*MyErr)(nil)` equal to `nil`? **No.**
+3. Can `&t` satisfy an interface that `t` can’t? **Yes** (if pointer receivers are required).
+
+---
+
+## Coding Task A (medium): Re-implement `io.LimitReader`
+
+**Goal:** Wrap an `io.Reader` so that it exposes **at most `n` bytes** to callers of `Read`. After the limit, `Read` should return `0, io.EOF` even if the underlying reader has more.
+
+### Starter
+
+```go
+package main
+
+import (
+	"io"
+)
+
+type limitReader struct {
+	r   io.Reader
+	rem int64
+}
+
+func LimitReader(r io.Reader, n int64) io.Reader {
+	return &limitReader{r: r, rem: n}
+}
+
+func (lr *limitReader) Read(p []byte) (int, error) {
+	if lr.rem <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > lr.rem {
+		p = p[:lr.rem] // shrink request
+	}
+	n, err := lr.r.Read(p)
+	lr.rem -= int64(n)
+	// TODO: If err is nil but rem just hit 0, next call must return io.EOF (that’s fine).
+	// Return n and err as appropriate.
+	return n, err
+}
+```
+
+---
+
+## Coding Task B (medium): Re-implement `io.TeeReader`
+
+**Goal:** Return a reader that reads from `r` and **writes everything it reads** to writer `w`. Errors from `w.Write` should be surfaced.
+
+### Starter
+
+```go
+package main
+
+import "io"
+
+type teeReader struct {
+	r io.Reader
+	w io.Writer
+}
+
+func TeeReader(r io.Reader, w io.Writer) io.Reader {
+	return &teeReader{r: r, w: w}
+}
+
+func (t *teeReader) Read(p []byte) (int, error) {
+	n, err := t.r.Read(p)
+	if n > 0 {
+		if _, werr := t.w.Write(p[:n]); werr != nil {
+			// Prefer returning the write error, but do not lose already-read bytes.
+			// Convention: return n and the write error (callers got the data).
+			return n, werr
+		}
+	}
+	return n, err
+}
+```
+
+---
+
+## Bonus (tiny) — Nil-error trap demo
+
+```go
+type MyErr struct{ msg string }
+func (e *MyErr) Error() string { return e.msg }
+
+func maybeErr(b bool) error {
+	if !b {
+		var e *MyErr = nil
+		// return e   // BAD: non-nil interface
+		return nil    // GOOD: untyped nil
+	}
+	return &MyErr{"boom"}
+}
+```
+
+---
+
+
+Here are the polished reference solutions:
+
+### A) `io.LimitReader`
+
+```go
+package main
+
+import "io"
+
+type limitReader struct {
+	r   io.Reader
+	rem int64
+}
+
+func LimitReader(r io.Reader, n int64) io.Reader {
+	return &limitReader{r: r, rem: n}
+}
+
+func (lr *limitReader) Read(p []byte) (int, error) {
+	if lr.rem <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > lr.rem {
+		p = p[:lr.rem]
+	}
+	n, err := lr.r.Read(p)
+	lr.rem -= int64(n)
+	return n, err
+}
+```
+
+### B) `io.TeeReader`
+
+```go
+package main
+
+import "io"
+
+type teeReader struct {
+	r io.Reader
+	w io.Writer
+}
+
+func TeeReader(r io.Reader, w io.Writer) io.Reader {
+	return &teeReader{r: r, w: w}
+}
+
+func (t *teeReader) Read(p []byte) (int, error) {
+	n, err := t.r.Read(p)
+	if n > 0 {
+		if _, werr := t.w.Write(p[:n]); werr != nil {
+			// Return the write error but keep n so caller gets the bytes read.
+			return n, werr
+		}
+	}
+	return n, err
+}
+```
+
+great—Step 5 it is ⚡
+
+# Step 5 — Errors & `context`: wrapping, `errors.Is/As`, timeouts, cancellation
+
+## Must-know (tight & practical)
+
+* **Wrap errors** with `%w` so callers can probe root causes:
+
+  ```go
+  if err != nil { return fmt.Errorf("open config %q: %w", path, err) }
+  ```
+* **Probe** with `errors.Is` (for sentinels) and `errors.As` (for types):
+
+  ```go
+  if errors.Is(err, io.EOF) { ... }
+  var pe *PathError
+  if errors.As(err, &pe) { fmt.Println(pe.Path) }
+  ```
+* **Sentinel vs typed errors**
+
+  * Sentinel (var): `var ErrNotFound = errors.New("not found")` — easy matching across packages.
+  * Typed (struct): carries data; match with `errors.As`.
+* **`context.Context`**
+
+  * Flows from incoming request → all callees.
+  * Always accept `ctx context.Context` as **first** param.
+  * Respect cancellation: check `ctx.Done()` (select) or pass ctx into I/O libs that support it.
+  * Common patterns: `context.WithTimeout`, `context.WithCancel`, `context.WithDeadline`.
+
+## Pitfalls
+
+* Returning **typed nil** errors (from Step 4). Always `return nil` for no error.
+* Ignoring `ctx.Done()` in loops / backoff sleeps.
+* Swallowing root causes (forgetting `%w`) → breaks `Is/As`.
+
+---
+
+## Micro-quiz (quick)
+
+1. `%w` vs `%v` for error wrapping? → **`%w`** (enables `errors.Is/As`)
+2. Should `ctx` be the first param? → **Yes**
+3. Is `context` safe to store and reuse? → **No** (short-lived; pass through call chain)
+
+---
+
+## Coding Task A (medium): Context-aware retry with backoff
+
+**Goal:** `Retry(ctx, max int, base time.Duration, fn func(ctx context.Context) error) error`
+
+* Retry `fn` up to `max` times with exponential backoff: `sleep = base * 2^(attempt-1)` (attempt starts at 1).
+* If `ctx` is canceled or deadline exceeded, **stop immediately** and return `ctx.Err()`.
+* If `fn` returns a **non-retryable** error (e.g., `ErrPermanent`), **stop without further retries**.
+* Wrap the final error with attempt count using `%w`.
+
+Starter:
+
+```go
+package retry
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+)
+
+var ErrPermanent = errors.New("permanent")
+
+// IsPermanent lets fn mark an error non-retryable by wrapping ErrPermanent.
+func IsPermanent(err error) bool {
+	return errors.Is(err, ErrPermanent)
+}
+
+func Retry(ctx context.Context, max int, base time.Duration, fn func(context.Context) error) error {
+	if max <= 0 {
+		return nil
+	}
+	var last error
+	for attempt := 1; attempt <= max; attempt++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		err := fn(ctx)
+		if err == nil {
+			return nil
+		}
+		if IsPermanent(err) {
+			return fmt.Errorf("retry aborted at attempt %d: %w", attempt, err)
+		}
+		last = err
+		// backoff (skip sleep after final attempt)
+		if attempt < max {
+			d := base << (attempt - 1) // exponential
+			timer := time.NewTimer(d)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	return fmt.Errorf("retry failed after %d attempts: %w", max, last)
+}
+```
+
+---
+
+## Coding Task B (medium): Context-aware HTTP GET with deadline, wrapping, and size cap
+
+**Goal:** `Fetch(ctx context.Context, url string, limit int64) ([]byte, error)`
+
+Requirements:
+
+* Use an `http.Client{}` with no custom timeout; rely on **ctx** for cancellation.
+* Use `http.NewRequestWithContext(ctx, "GET", url, nil)`.
+* If status not in 200–299, return wrapped error with status code.
+* **Cap** body to `limit` bytes using `io.LimitReader`; if exactly hit limit, still succeed (like curl).
+* Ensure body is always closed. Wrap root cause with `%w`.
+
+Starter:
+
+```go
+package fetch
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+)
+
+func Fetch(ctx context.Context, url string, limit int64) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Drain a little to allow connection reuse, but don’t overdo it.
+		_, _ = io.CopyN(io.Discard, resp.Body, 512)
+		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	r := io.LimitReader(resp.Body, limit)
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	return data, nil
+}
+```
+
+---
+
+## Bonus mini-task (easy): Wrap with context timeout
+
+**Goal:** `WithCallTimeout(ctx context.Context, d time.Duration, fn func(ctx context.Context) error) error`
+
+Pattern:
+
+```go
+func WithCallTimeout(ctx context.Context, d time.Duration, fn func(ctx context.Context) error) error {
+	ctx2, cancel := context.WithTimeout(ctx, d)
+	defer cancel()
+	if err := fn(ctx2); err != nil {
+		// bubble up; caller can probe with errors.Is(err, context.DeadlineExceeded)
+		return err
+	}
+	return nil
+}
+```
+
+---
+
+Here are polished reference solutions for all three:
+
+### A) Context-aware Retry with Backoff
+
+```go
+package retry
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+)
+
+var ErrPermanent = errors.New("permanent")
+
+// IsPermanent reports whether err (possibly wrapped) is marked non-retryable.
+func IsPermanent(err error) bool { return errors.Is(err, ErrPermanent) }
+
+// Retry runs fn up to max attempts with exponential backoff starting at base.
+// It respects ctx cancellation/deadlines and stops immediately on ErrPermanent.
+func Retry(ctx context.Context, max int, base time.Duration, fn func(context.Context) error) error {
+	if max <= 0 {
+		return nil
+	}
+	var last error
+	for attempt := 1; attempt <= max; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := fn(ctx)
+		if err == nil {
+			return nil
+		}
+		if IsPermanent(err) {
+			return fmt.Errorf("retry aborted at attempt %d: %w", attempt, err)
+		}
+		last = err
+
+		// sleep before next attempt (except after the final one)
+		if attempt < max {
+			d := base << (attempt - 1) // base, 2*base, 4*base, ...
+			timer := time.NewTimer(d)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	return fmt.Errorf("retry failed after %d attempts: %w", max, last)
+}
+```
+
+### B) Context-aware HTTP Fetch with Size Cap
+
+```go
+package fetch
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+)
+
+// Fetch performs a GET using ctx, returning up to limit bytes of the body.
+// Non-2xx statuses are errors. Always closes the body. Errors are wrapped.
+func Fetch(ctx context.Context, url string, limit int64) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Small drain for connection reuse (best-effort).
+		_, _ = io.CopyN(io.Discard, resp.Body, 512)
+		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit))
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	return data, nil
+}
+```
+
+### Bonus) Helper to Run a Call with Timeout
+
+```go
+package timeout
+
+import (
+	"context"
+	"time"
+)
+
+func WithCallTimeout(ctx context.Context, d time.Duration, fn func(ctx context.Context) error) error {
+	ctx2, cancel := context.WithTimeout(ctx, d)
+	defer cancel()
+	return fn(ctx2) // caller can check errors.Is(err, context.DeadlineExceeded)
+}
+```
+awesome — Step 6 🧵
+
+# Concurrency — goroutines, channels, `select`, worker pools, cancellation
+
+## Must-know (crisp)
+
+* **Goroutine** = lightweight thread: `go f()`.
+* **Channel** carries values + synchronization.
+
+  * Unbuffered: send/recv rendezvous.
+  * Buffered: capacity `n`; send blocks when full, recv blocks when empty.
+* **Close** with `close(ch)` to broadcast “no more values”. Only the **sender** closes.
+* **Range over channel** drains until closed.
+* **`select`** waits on multiple ops; include a `default` for non-blocking.
+* **Cancellation**: pass `ctx` everywhere; stop workers when `<-ctx.Done()` fires.
+* **Do not** send on a closed channel; it panics.
+* **Reads from closed channel**: zero value + `ok=false`.
+
+## Pitfalls
+
+* Leaking goroutines: a goroutine stuck on send/recv because its partner vanished.
+* Forgetting to close a **work output** channel (consumers block forever).
+* Mixing shared state without a mutex (data races). Use channels *or* `sync` primitives—don’t half-mix.
+
+## Micro-quiz
+
+1. Who should close a channel? → **The sender**
+2. What happens on receive from a closed channel? → **Zero value, `ok=false`**
+3. Best way to stop many goroutines at once? → **`context` cancellation**
+
+---
+
+## Coding Task A (medium): Bounded worker pool with context + errors
+
+**Goal:** Process `jobs []Job` with at most `concurrency` workers. Stop early if any job returns an error (cancel via ctx). Return the **first** error (wrapped), otherwise nil.
+
+```go
+package pool
+
+import (
+	"context"
+	"fmt"
+)
+
+type Job func(ctx context.Context) error
+
+// Run runs jobs with <= concurrency workers.
+// Cancels all workers once any job fails.
+func Run(ctx context.Context, jobs []Job, concurrency int) error {
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	type result struct {
+		err error
+	}
+	jobCh := make(chan Job)
+	resCh := make(chan result)
+
+	// workers
+	worker := func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case j, ok := <-jobCh:
+				if !ok {
+					return
+				}
+				if err := j(ctx); err != nil {
+					resCh <- result{err: fmt.Errorf("job failed: %w", err)}
+					return
+				}
+				resCh <- result{err: nil}
+			}
+		}
+	}
+	for i := 0; i < concurrency; i++ {
+		go worker()
+	}
+
+	// feed jobs
+	go func() {
+		defer close(jobCh)
+		for _, j := range jobs {
+			select {
+			case <-ctx.Done():
+				return
+			case jobCh <- j:
+			}
+		}
+	}()
+
+	// collect
+	pending := len(jobs)
+	for pending > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case r := <-resCh:
+			pending--
+			if r.err != nil {
+				cancel()
+				// Optionally drain a few messages; but we can return now.
+				return r.err
+			}
+		}
+	}
+	return nil
+}
+```
+
+---
+
+## Coding Task B (medium): Fan-in with cancellation
+
+**Goal:** Merge N input channels `<-chan T` into a **single** output channel `out <-chan T`. Stop everything when `ctx` is cancelled. Close `out` when all inputs are drained.
+
+```go
+package fanin
+
+import "context"
+
+func FanIn[T any](ctx context.Context, chans ...<-chan T) <-chan T {
+	out := make(chan T)
+	if len(chans) == 0 {
+		close(out)
+		return out
+	}
+
+	done := make(chan struct{})
+	// start one goroutine per input
+	for _, ch := range chans {
+		c := ch
+		go func() {
+			defer func() { done <- struct{}{} }()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case v, ok := <-c:
+					if !ok {
+						return
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case out <- v:
+					}
+				}
+			}
+		}()
+	}
+
+	// closer
+	go func(n int) {
+		// wait for all readers to report done
+		for i := 0; i < n; i++ {
+			<-done
+		}
+		close(out)
+	}(len(chans))
+
+	return out
+}
+```
+
+---
+
+## Coding Task C (easy): `or`-channel (cancel when any signal fires)
+
+**Goal:** Combine multiple `<-chan struct{}` into one that closes when **any** of them is closed.
+
+```go
+package orc
+
+import "context"
+
+func Or(ctx context.Context, chans ...<-chan struct{}) <-chan struct{} {
+	out := make(chan struct{})
+	if len(chans) == 0 {
+		close(out)
+		return out
+	}
+	go func() {
+		defer close(out)
+		cases := make([]reflect.SelectCase, 0, len(chans)+1)
+		cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())})
+		for _, ch := range chans {
+			cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)})
+		}
+		for {
+			_, _, _ = reflect.Select(cases) // returns when any is ready
+			return
+		}
+	}()
+	return out
+}
+```
+
+*(If your interviewer dislikes `reflect.Select`, write it with nested goroutines and a one-shot broadcast.)*
+
+---
+
+## Bonus Pattern: Pipeline with bounded parallelism
+
+Map → (bounded parallel worker stage) → Reduce. Good for CPU-bound tasks: chunk input, spawn `concurrency` workers, use `errgroup.WithContext` (if allowed) to simplify cancellation.
+
+---
+Here are polished, production-safe solutions for all three 👇
+
+### A) Bounded worker pool with context + early-cancel
+
+```go
+package pool
+
+import (
+	"context"
+	"fmt"
+	"sync"
+)
+
+type Job func(ctx context.Context) error
+
+// Run executes jobs with <= concurrency workers.
+// Cancels all workers on first error and returns that error (wrapped).
+func Run(ctx context.Context, jobs []Job, concurrency int) error {
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	jobCh := make(chan Job)
+	resCh := make(chan error, len(jobs)) // buffered to avoid send blocking
+
+	var wg sync.WaitGroup
+	worker := func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case j, ok := <-jobCh:
+				if !ok {
+					return
+				}
+				if err := j(ctx); err != nil {
+					// first error triggers cancel; still report err once
+					select {
+					case resCh <- fmt.Errorf("job failed: %w", err):
+					default:
+						// buffer full only if many errors; ignore extras
+					}
+					cancel()
+					return
+				}
+				select {
+				case resCh <- nil:
+				default:
+				}
+			}
+		}
+	}
+
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go worker()
+	}
+
+	// feeder
+	go func() {
+		defer close(jobCh)
+		for _, j := range jobs {
+			select {
+			case <-ctx.Done():
+				return
+			case jobCh <- j:
+			}
+		}
+	}()
+
+	// closer for resCh
+	go func() { wg.Wait(); close(resCh) }()
+
+	// collect first non-nil error (if any)
+	for range jobs {
+		if err := <-resCh; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+```
+
+### B) Fan-in (merge many inputs) with cancellation
+
+```go
+package fanin
+
+import (
+	"context"
+	"sync"
+)
+
+func FanIn[T any](ctx context.Context, chans ...<-chan T) <-chan T {
+	out := make(chan T)
+	if len(chans) == 0 {
+		close(out)
+		return out
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(len(chans))
+
+	for _, ch := range chans {
+		c := ch
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case v, ok := <-c:
+					if !ok {
+						return
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case out <- v:
+					}
+				}
+			}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+	return out
+}
+```
+
+### C) `or`-channel (closes when any input closes or ctx cancels)
+
+```go
+package orc
+
+import (
+	"context"
+	"sync"
+)
+
+func Or(ctx context.Context, chans ...<-chan struct{}) <-chan struct{} {
+	out := make(chan struct{})
+	var once sync.Once
+	closeOut := func() { once.Do(func() { close(out) }) }
+
+	// if no inputs, close immediately (but still honor ctx)
+	if len(chans) == 0 {
+		go func() {
+			select {
+			case <-ctx.Done():
+			default:
+			}
+			closeOut()
+		}()
+		return out
+	}
+
+	go func() {
+		defer closeOut()
+		var wg sync.WaitGroup
+		wg.Add(len(chans) + 1)
+
+		// ctx watcher
+		go func() { defer wg.Done(); <-ctx.Done() }()
+
+		// each input watcher
+		for _, ch := range chans {
+			c := ch
+			go func() { defer wg.Done(); <-c }()
+		}
+
+		// return as soon as any watcher unblocks
+		wg.Wait()
+	}()
+	return out
+}
+```
+nice — Step 7: memory & performance time 🚀
+
+# Step 7 — Allocations, escape analysis, pools, and fast I/O
+
+## Must-know (tight + practical)
+
+* **Escape analysis:** a value goes to the heap if its address “escapes” the function (returned pointer, stored in interface/closure, put in a long-lived struct, etc.). Check with:
+
+  ```
+  go build -gcflags='-m' ./...
+  ```
+
+  Common escape triggers:
+
+  * `return &local`
+  * Passing a value to an `interface{}` (boxing)
+  * Capturing by a goroutine/closure
+  * `fmt` in hot paths (boxes to `interface{}`)
+* **Cut allocations:**
+
+  * Preallocate: `make([]T, 0, n)` / `make(map[K]V, n)`
+  * Use `strings.Builder` / `bytes.Buffer` (+ `Grow`) for concatenation
+  * Prefer `strconv.Append*` / `binary.*` over `fmt.*` in tight loops
+  * Reuse buffers (`sync.Pool`) for short-lived, high-throughput temps
+* **`sync.Pool`:**
+
+  * For **temporal** reuse (per-request scratch), not a cache
+  * GC may drop contents anytime; always handle empty `Get()`
+  * `Reset()` objects before `Put()`
+  * Don’t store sensitive data unless you wipe it first
+* **Zero-copy / fewer copies:**
+
+  * Work on slices where possible; avoid unnecessary `append` chains
+  * Be careful: sub-slicing can **retain** a huge backing array → copy to trim cap
+* **Profiles first:** `go test -bench . -benchmem`, `pprof` (`net/http/pprof` or `go tool pprof`)
+
+---
+
+## Micro-quiz (quick)
+
+1. Does passing a value to `fmt.Sprintf` often cause an allocation? **Yes** (boxing + result string)
+2. Is `sync.Pool` a cache you can rely on holding items? **No** (GC can clear)
+3. Will sub-slicing a 10MB buffer to 1KB free the 10MB? **No** (trim with copy)
+
+---
+
+## Coding Task A (medium): Allocation-lean ints → CSV
+
+**Goal:** `IntsToCSV(xs []int) string` with **minimal allocs**.
+
+**Hints**
+
+* Use `strings.Builder`
+* `builder.Grow(estimatedSize)`
+* Use `strconv.AppendInt` into a `[]byte` via `builder.Grow` + `builder.Write` or keep a small scratch `[]byte`.
+
+**Starter**
+
+```go
+package csvfast
+
+import (
+	"strconv"
+	"strings"
+)
+
+func IntsToCSV(xs []int) string {
+	if len(xs) == 0 { return "" }
+	var b strings.Builder
+	// rough estimate: up to ~11 chars per int + commas
+	b.Grow(len(xs) * 12)
+
+	// write first without comma
+	buf := make([]byte, 0, 32) // small scratch reused per number
+	buf = strconv.AppendInt(buf[:0], int64(xs[0]), 10)
+	b.Write(buf)
+
+	for i := 1; i < len(xs); i++ {
+		b.WriteByte(',')
+		buf = strconv.AppendInt(buf[:0], int64(xs[i]), 10)
+		b.Write(buf)
+	}
+	return b.String()
+}
+```
+
+---
+
+## Coding Task B (medium): Byte buffer pool + safe reuse
+
+**Goal:** Provide a pooled buffer for temporary work.
+
+**Requirements**
+
+* Use `sync.Pool` with fixed target size (e.g., 64KB)
+* `GetBuf()` returns `[]byte` with `len=0, cap=64<<10`
+* `PutBuf(b)` only if `cap(b)` is within a sane bound; **zero** the visible part used if sensitive
+
+**Starter**
+
+```go
+package bufpool
+
+import "sync"
+
+const bufCap = 64 << 10 // 64KB
+
+var pool = sync.Pool{
+	New: func() any { b := make([]byte, 0, bufCap); return &b },
+}
+
+func GetBuf() []byte {
+	return *pool.Get().(*[]byte)
+}
+
+func PutBuf(b []byte) {
+	if cap(b) != bufCap {
+		return // don't poison pool with odd sizes
+	}
+	// optional wipe: for i := range b { b[i] = 0 }
+	b = b[:0]
+	pool.Put(&b)
+}
+```
+
+**Example usage (fast copy):**
+
+```go
+// Copies up to limit bytes from r to w using pooled buffer.
+func CopyN(w io.Writer, r io.Reader, limit int64) (written int64, err error) {
+	b := GetBuf()
+	defer PutBuf(b)
+	for limit > 0 {
+		chunk := int64(bufCap)
+		if chunk > limit { chunk = limit }
+		nr, er := r.Read(b[:chunk])
+		if nr > 0 {
+			nw, ew := w.Write(b[:nr])
+			written += int64(nw)
+			if ew != nil { return written, ew }
+			if nw < nr { return written, io.ErrShortWrite }
+			limit -= int64(nr)
+		}
+		if er != nil {
+			if er == io.EOF { break }
+			return written, er
+		}
+	}
+	return written, nil
+}
+```
+
+---
+
+## Coding Task C (easy): ReadAll with pre-growth + hard limit
+
+**Goal:** `ReadAllLimit(r io.Reader, limit int64) ([]byte, error)`
+
+* Pre-size a `bytes.Buffer` with `Grow(int(min(limit, 64<<10)))`
+* Use `io.CopyN` into the buffer up to `limit`
+* If the source has **more** than `limit`, stop and still return the first `limit` bytes (no error)
+
+**Starter**
+
+```go
+package rlimit
+
+import (
+	"bytes"
+	"io"
+)
+
+func ReadAllLimit(r io.Reader, limit int64) ([]byte, error) {
+	var buf bytes.Buffer
+	// optimistic pre-growth
+	if limit > 0 {
+		if limit > 64<<10 {
+			buf.Grow(64 << 10)
+		} else {
+			buf.Grow(int(limit))
+		}
+	}
+	_, err := io.CopyN(&buf, r, limit)
+	if err != nil {
+		if err == io.EOF {
+			// source shorter than limit → ok
+			return buf.Bytes(), nil
+		}
+		if err == io.ErrUnexpectedEOF {
+			// hit EOF before limit → also fine
+			return buf.Bytes(), nil
+		}
+		return nil, err
+	}
+	// exactly limit bytes read — ignore any trailing data.
+	return buf.Bytes(), nil
+}
+```
+
+---
+Here are polished, allocation-aware solutions for all three:
+
+### A) `IntsToCSV` (minimal allocs)
+
+```go
+package csvfast
+
+import (
+	"strconv"
+	"strings"
+)
+
+func IntsToCSV(xs []int) string {
+	if len(xs) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.Grow(len(xs) * 12) // ~11 digits + comma cushion
+
+	// small reusable scratch for strconv.AppendInt
+	buf := make([]byte, 0, 32)
+
+	// first value (no leading comma)
+	buf = strconv.AppendInt(buf[:0], int64(xs[0]), 10)
+	b.Write(buf)
+
+	for i := 1; i < len(xs); i++ {
+		b.WriteByte(',')
+		buf = strconv.AppendInt(buf[:0], int64(xs[i]), 10)
+		b.Write(buf)
+	}
+	return b.String()
+}
+```
+
+### B) Byte buffer pool (`sync.Pool`) + safe reuse
+
+```go
+package bufpool
+
+import "sync"
+
+const bufCap = 64 << 10 // 64KB
+
+var pool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 0, bufCap)
+		return &b
+	},
+}
+
+func GetBuf() []byte {
+	return *pool.Get().(*[]byte) // len=0, cap=64KB
+}
+
+func PutBuf(b []byte) {
+	if cap(b) != bufCap {
+		return // keep pool homogenous
+	}
+	// Optional wipe if sensitive:
+	// for i := range b { b[i] = 0 }
+	b = b[:0]
+	pool.Put(&b)
+}
+```
+
+**Example use (fast copy with cap):**
+
+```go
+package bufpool
+
+import (
+	"io"
+)
+
+func CopyN(w io.Writer, r io.Reader, limit int64) (written int64, err error) {
+	b := GetBuf()
+	defer PutBuf(b)
+
+	for limit > 0 {
+		chunk := int64(bufCap)
+		if chunk > limit {
+			chunk = limit
+		}
+		nr, er := r.Read(b[:chunk])
+		if nr > 0 {
+			nw, ew := w.Write(b[:nr])
+			written += int64(nw)
+			if ew != nil {
+				return written, ew
+			}
+			if nw < nr {
+				return written, io.ErrShortWrite
+			}
+			limit -= int64(nr)
+		}
+		if er != nil {
+			if er == io.EOF {
+				break
+			}
+			return written, er
+		}
+	}
+	return written, nil
+}
+```
+
+### C) `ReadAllLimit` (pre-growth + hard limit)
+
+```go
+package rlimit
+
+import (
+	"bytes"
+	"io"
+)
+
+func ReadAllLimit(r io.Reader, limit int64) ([]byte, error) {
+	var buf bytes.Buffer
+	if limit > 0 {
+		if limit > 64<<10 {
+			buf.Grow(64 << 10)
+		} else {
+			buf.Grow(int(limit))
+		}
+	}
+
+	_, err := io.CopyN(&buf, r, limit)
+	switch err {
+	case nil:
+		// exactly 'limit' bytes read; ignore any extra from source
+		return buf.Bytes(), nil
+	case io.EOF, io.ErrUnexpectedEOF:
+		// source shorter than limit — still return what we have
+		return buf.Bytes(), nil
+	default:
+		return nil, err
+	}
+}
+```
+nice — Step 8: testing & benchmarking ✅
+
+# Step 8 — Tests, fuzzing, benches, race detector
+
+## Must-know (crisp)
+
+* **Table-driven tests**: compact, extensible; use `t.Run(name, func(t *testing.T){ ... })`.
+* **Subtests & `t.Parallel()`**: run independent cases in parallel (not when sharing mutable fixtures).
+* **Golden files**: store expected outputs on disk; update behind a flag (guard carefully).
+* **Fuzzing** (`go test -fuzz=.`): property tests that generate inputs to break assumptions.
+* **Benchmarks**: `BenchmarkXxx(b *testing.B)`; avoid allocations in the loop setup; use `b.ReportAllocs()`.
+* **Race detector**: `go test -race ./...` to catch data races.
+* **Useful flags**: `-run`, `-v`, `-bench`, `-benchtime=2s`, `-benchmem`, `-count=1`.
+
+---
+
+## Micro-quiz
+
+1. Where do fuzz tests live? → **`*_test.go`**, functions start with `FuzzXxx`.
+2. What does `-benchmem` show? → **allocs/op, B/op, ns/op**.
+3. Safe to call `t.Parallel()` if cases share & mutate a global map? → **No**.
+
+---
+
+## Coding Task A — Table-driven tests (+ subtests) for `IsPalindrome`
+
+Create `palindrome_test.go` that reuses your Step-1 `IsPalindrome`.
+
+```go
+package main
+
+import "testing"
+
+func TestIsPalindrome(t *testing.T) {
+	cases := []struct{
+		name string
+		in   string
+		want bool
+	}{
+		{"ascii_ok", "racecar", true},
+		{"ascii_mixed", "No 'x' in Nixon", true},
+		{"unicode_ok", "नयन", true},
+		{"unicode_mixed", "Åbba, ba!", true},
+		{"emoji_filtered", "🙂a🙂", true},  // emojis filtered (or treated consistently)
+		{"nope", "hello", false},
+		{"empty", "", true},
+	}
+	for _, tc := range cases {
+		tc := tc // capture
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := IsPalindrome(tc.in)
+			if got != tc.want {
+				t.Fatalf("IsPalindrome(%q)=%v want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+```
+
+> Run: `go test -run TestIsPalindrome -v`
+
+---
+
+## Coding Task B — Fuzz test for `LimitReader`
+
+Property: **Total bytes yielded across any sequence of `Read`s must equal the prefix of the underlying data up to `n` bytes; never exceed `n`.**
+
+Create `limitreader_fuzz_test.go` (using your Step-4 `LimitReader`):
+
+```go
+package main
+
+import (
+	"bytes"
+	"io"
+	"testing"
+)
+
+func FuzzLimitReader(f *testing.F) {
+	f.Add([]byte("hello world"), int64(0))
+	f.Add([]byte("hello world"), int64(5))
+	f.Add([]byte(""), int64(10))
+
+	f.Fuzz(func(t *testing.T, data []byte, n int64) {
+		if n < 0 { n = -n } // make non-negative
+		r := LimitReader(bytes.NewReader(data), n)
+
+		got := make([]byte, 0, len(data))
+		buf := make([]byte, 3) // arbitrary chunk size
+		total := int64(0)
+		for {
+			nr, err := r.Read(buf)
+			if nr > 0 {
+				got = append(got, buf[:nr]...)
+				total += int64(nr)
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if total > n {
+				t.Fatalf("read exceeded limit: total=%d limit=%d", total, n)
+			}
+		}
+		want := data
+		if int64(len(want)) > n {
+			want = want[:n]
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("mismatch got=%q want=%q", string(got), string(want))
+		}
+	})
+}
+```
+
+> Run fuzzing: `go test -fuzz=. -run=^$` (press Ctrl-C when satisfied).
+
+---
+
+## Coding Task C — Benchmarks for `IntsToCSV` vs a naïve join
+
+Create `csv_bench_test.go` (using your Step-7 `IntsToCSV`):
+
+```go
+package csvfast
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
+
+func gen(n int) []int {
+	xs := make([]int, n)
+	for i := range xs { xs[i] = 1000000 + i }
+	return xs
+}
+
+func BenchmarkIntsToCSV_1k(b *testing.B)  { benchCSV(b, 1_000) }
+func BenchmarkIntsToCSV_10k(b *testing.B) { benchCSV(b, 10_000) }
+
+func benchCSV(b *testing.B, n int) {
+	b.ReportAllocs()
+	xs := gen(n)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = IntsToCSV(xs)
+	}
+}
+
+// naive: many allocations
+func BenchmarkNaiveJoin_10k(b *testing.B) {
+	b.ReportAllocs()
+	xs := gen(10_000)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ss := make([]string, len(xs))
+		for j, v := range xs { ss[j] = fmt.Sprint(v) }
+		_ = strings.Join(ss, ",")
+	}
+}
+```
+
+> Run: `go test -bench=. -benchmem`
+
+Expected: `IntsToCSV` should show **significantly fewer allocs/op** and bytes/op than the naïve version.
+
+---
+
+## Extras to sprinkle in real projects
+
+* **Race detector**: `go test -race ./...` (use especially for Step-6 concurrency code).
+* **Sub-benchmarks**: `b.Run("size=1k", func(b *testing.B){ ... })`.
+* **Golden files**:
+
+  * Read expected from `testdata/xxx.golden`.
+  * Update behind flag: `go test -run TestX -update`.
+* **HTTP testing**: `httptest.NewServer` to simulate endpoints; assert request headers/bodies.
+
+---
+Here are polished, ready-to-run references for all three ✅
+
+### A) `palindrome_test.go` — Table-driven tests + subtests
+
+```go
+package main
+
+import "testing"
+
+func TestIsPalindrome(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"ascii_ok", "racecar", true},
+		{"ascii_mixed", "No 'x' in Nixon", true},
+		{"unicode_ok", "नयन", true},
+		{"unicode_mixed", "Åbba, ba!", true},
+		{"emoji_filtered", "🙂a🙂", true}, // treat consistently with your filter rule
+		{"nope", "hello", false},
+		{"empty", "", true},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := IsPalindrome(tc.in)
+			if got != tc.want {
+				t.Fatalf("IsPalindrome(%q)=%v want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+```
+
+---
+
+### B) `limitreader_fuzz_test.go` — Fuzz test for `LimitReader`
+
+```go
+package main
+
+import (
+	"bytes"
+	"io"
+	"testing"
+)
+
+func FuzzLimitReader(f *testing.F) {
+	f.Add([]byte("hello world"), int64(0))
+	f.Add([]byte("hello world"), int64(5))
+	f.Add([]byte(""), int64(10))
+
+	f.Fuzz(func(t *testing.T, data []byte, n int64) {
+		if n < 0 {
+			n = -n
+		}
+		r := LimitReader(bytes.NewReader(data), n)
+
+		got := make([]byte, 0, len(data))
+		buf := make([]byte, 3) // arbitrary chunking
+		var total int64
+		for {
+			nr, err := r.Read(buf)
+			if nr > 0 {
+				got = append(got, buf[:nr]...)
+				total += int64(nr)
+				if total > n {
+					t.Fatalf("exceeded limit: total=%d limit=%d", total, n)
+				}
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		}
+		want := data
+		if int64(len(want)) > n {
+			want = want[:n]
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("mismatch got=%q want=%q", string(got), string(want))
+		}
+	})
+}
+```
+
+---
+
+### C) `csv_bench_test.go` — Benchmarks for `IntsToCSV` vs naïve join
+
+```go
+package csvfast
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
+
+func gen(n int) []int {
+	xs := make([]int, n)
+	for i := range xs {
+		xs[i] = 1_000_000 + i
+	}
+	return xs
+}
+
+func BenchmarkIntsToCSV_1k(b *testing.B)  { benchCSV(b, 1_000) }
+func BenchmarkIntsToCSV_10k(b *testing.B) { benchCSV(b, 10_000) }
+
+func benchCSV(b *testing.B, n int) {
+	b.ReportAllocs()
+	xs := gen(n)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = IntsToCSV(xs)
+	}
+}
+
+// naive baseline (many allocs)
+func BenchmarkNaiveJoin_10k(b *testing.B) {
+	b.ReportAllocs()
+	xs := gen(10_000)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ss := make([]string, len(xs))
+		for j, v := range xs {
+			ss[j] = fmt.Sprint(v)
+		}
+		_ = strings.Join(ss, ",")
+	}
+}
+```
+
+**Run tips**
+
+* Unit tests: `go test -run TestIsPalindrome -v`
+* Fuzz: `go test -fuzz=. -run=^$`
+* Benches: `go test -bench=. -benchmem`
+* Race detector: `go test -race ./...`
+
+
+sweet — Step 9: File I/O & serialization 📄
+
+# JSON/YAML in Go — streaming, tags, custom marshaling
+
+## Must-know (tight)
+
+* `encoding/json` respects **exported** fields only.
+* Tags: `` `json:"field_name,omitempty"` ``
+
+  * `omitempty` skips **zero values** (0, "", nil, false, empty slice/map/ptr/struct with all zero fields).
+* **Time**: default RFC3339 for `time.Time`. Use custom type to change format.
+* **Streaming**: prefer `json.NewDecoder(r)` / `json.NewEncoder(w)` for big payloads.
+  Use `DisallowUnknownFields()` in strict APIs.
+* **Numbers**: `Decoder.UseNumber()` keeps `json.Number` to avoid float64 loss.
+* **Raw**: `json.RawMessage` to defer/inline raw JSON.
+* **Custom marshal**: implement `MarshalJSON`/`UnmarshalJSON`. Keep them allocation-light.
+
+---
+
+## Micro-quiz
+
+1. Will unexported fields be marshaled? → **No**
+2. Does `omitempty` skip `0` for `int` and `false` for `bool`? → **Yes**
+3. Best way for huge files? → **Stream** with `Encoder/Decoder` (no `io.ReadAll`)
+
+---
+
+## Coding Task A (medium): Strict streaming decode with defaults
+
+**Goal:** Read a large JSON object from `io.Reader` into `Config`, with:
+
+* Unknown fields → error
+* Some fields defaulted if missing
+* `UseNumber()` for numeric precision
+
+**Starter**
+
+```go
+package cfg
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"time"
+)
+
+type Config struct {
+	Name     string            `json:"name"`
+	Enabled  bool              `json:"enabled"`
+	Ports    []int             `json:"ports,omitempty"`
+	Meta     map[string]string `json:"meta,omitempty"`
+	Timeout  time.Duration     `json:"timeout_ms"` // in milliseconds
+}
+
+// ApplyDefaults sets sane defaults (idempotent).
+func (c *Config) ApplyDefaults() {
+	if c.Enabled == false { c.Enabled = true }
+	if c.Timeout == 0 { c.Timeout = 1500 * time.Millisecond }
+}
+
+func LoadConfig(r io.Reader) (*Config, error) {
+	dec := json.NewDecoder(r)
+	dec.DisallowUnknownFields()
+	dec.UseNumber()
+
+	var aux struct {
+		Name    string            `json:"name"`
+		Enabled *bool             `json:"enabled"`       // pointer to detect presence
+		Ports   []int             `json:"ports"`
+		Meta    map[string]string `json:"meta"`
+		Timeout json.Number       `json:"timeout_ms"`
+	}
+
+	if err := dec.Decode(&aux); err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	var c Config
+	c.Name = aux.Name
+	if aux.Enabled != nil { c.Enabled = *aux.Enabled }
+	c.Ports = aux.Ports
+	c.Meta = aux.Meta
+	if aux.Timeout != "" {
+		ms, err := aux.Timeout.Int64()
+		if err != nil { return nil, fmt.Errorf("timeout_ms: %w", err) }
+		c.Timeout = time.Duration(ms) * time.Millisecond
+	}
+	c.ApplyDefaults()
+	return &c, nil
+}
+```
+
+---
+
+## Coding Task B (medium): Custom time format + round-trip stability
+
+**Goal:** Serialize timestamps as `2006-01-02 15:04:05` (no timezone). Implement custom type `LocalTime` with `MarshalJSON/UnmarshalJSON`. Ensure round-trip: `json.Unmarshal(json.Marshal(v))` yields equal values.
+
+**Starter**
+
+```go
+package jtime
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"time"
+)
+
+const layout = "2006-01-02 15:04:05"
+
+type LocalTime struct{ time.Time }
+
+func (lt LocalTime) MarshalJSON() ([]byte, error) {
+	s := lt.Time.Format(layout)
+	// wrap as JSON string
+	return json.Marshal(s)
+}
+
+func (lt *LocalTime) UnmarshalJSON(b []byte) error {
+	// Accept either string or null
+	if bytes.Equal(b, []byte("null")) {
+		*lt = LocalTime{}
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return fmt.Errorf("LocalTime must be string: %w", err)
+	}
+	t, err := time.ParseInLocation(layout, s, time.Local)
+	if err != nil {
+		return fmt.Errorf("parse LocalTime: %w", err)
+	}
+	*lt = LocalTime{t}
+	return nil
+}
+
+type Event struct {
+	ID   string    `json:"id"`
+	When LocalTime `json:"when"`
+}
+```
+
+---
+
+## Coding Task C (easy): Partially dynamic payloads with `RawMessage`
+
+**Goal:** Decode an envelope `{ "type": "...", "payload": { ... } }` where payload schema depends on `type`. Use `json.RawMessage`, then unmarshal based on switch.
+
+**Starter**
+
+```go
+package dyn
+
+import (
+	"encoding/json"
+	"fmt"
+)
+
+type Envelope struct {
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+type UserCreated struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+type PaymentCaptured struct {
+	ID     string  `json:"id"`
+	Amount float64 `json:"amount"`
+	Curr   string  `json:"currency"`
+}
+
+func DecodeEnvelope(b []byte) (any, error) {
+	var env Envelope
+	if err := json.Unmarshal(b, &env); err != nil {
+		return nil, fmt.Errorf("envelope: %w", err)
+	}
+	switch env.Type {
+	case "user.created":
+		var uc UserCreated
+		if err := json.Unmarshal(env.Payload, &uc); err != nil {
+			return nil, fmt.Errorf("user.created: %w", err)
+		}
+		return uc, nil
+	case "payment.captured":
+		var pc PaymentCaptured
+		if err := json.Unmarshal(env.Payload, &pc); err != nil {
+			return nil, fmt.Errorf("payment.captured: %w", err)
+		}
+		return pc, nil
+	default:
+		return nil, fmt.Errorf("unknown type %q", env.Type)
+	}
+}
+```
+
+---
+
+## YAML quick note
+
+* Use `gopkg.in/yaml.v3`. Tags: `` `yaml:"name,omitempty"` ``.
+* Beware: YAML has more implicit types; prefer **strict** decoders when available or validate after decode.
+
+---
+
+Here are polished, ready-to-drop-in solutions for all three 👇
+
+### A) Strict streaming decode with defaults (`LoadConfig`)
+
+```go
+package cfg
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"time"
+)
+
+type Config struct {
+	Name    string            `json:"name"`
+	Enabled bool              `json:"enabled"`
+	Ports   []int             `json:"ports,omitempty"`
+	Meta    map[string]string `json:"meta,omitempty"`
+	// Stored internally as duration; serialized from timeout_ms
+	Timeout time.Duration `json:"timeout_ms"`
+}
+
+// ApplyDefaults is idempotent.
+func (c *Config) ApplyDefaults() {
+	if !c.Enabled {
+		c.Enabled = true
+	}
+	if c.Timeout == 0 {
+		c.Timeout = 1500 * time.Millisecond
+	}
+}
+
+func LoadConfig(r io.Reader) (*Config, error) {
+	dec := json.NewDecoder(r)
+	dec.DisallowUnknownFields()
+	dec.UseNumber()
+
+	var aux struct {
+		Name    string            `json:"name"`
+		Enabled *bool             `json:"enabled"`
+		Ports   []int             `json:"ports"`
+		Meta    map[string]string `json:"meta"`
+		Timeout json.Number       `json:"timeout_ms"`
+	}
+	if err := dec.Decode(&aux); err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+
+	var c Config
+	c.Name = aux.Name
+	if aux.Enabled != nil {
+		c.Enabled = *aux.Enabled
+	}
+	c.Ports = aux.Ports
+	c.Meta = aux.Meta
+	if aux.Timeout != "" {
+		ms, err := aux.Timeout.Int64()
+		if err != nil {
+			return nil, fmt.Errorf("timeout_ms: %w", err)
+		}
+		c.Timeout = time.Duration(ms) * time.Millisecond
+	}
+
+	c.ApplyDefaults()
+	return &c, nil
+}
+```
+
+---
+
+### B) Custom time format with round-trip stability (`LocalTime`)
+
+```go
+package jtime
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"time"
+)
+
+const layout = "2006-01-02 15:04:05"
+
+type LocalTime struct{ time.Time }
+
+func (lt LocalTime) MarshalJSON() ([]byte, error) {
+	// Encode as JSON string
+	return json.Marshal(lt.Time.Format(layout))
+}
+
+func (lt *LocalTime) UnmarshalJSON(b []byte) error {
+	if bytes.Equal(b, []byte("null")) {
+		*lt = LocalTime{}
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return fmt.Errorf("LocalTime must be string: %w", err)
+	}
+	t, err := time.ParseInLocation(layout, s, time.Local)
+	if err != nil {
+		return fmt.Errorf("parse LocalTime: %w", err)
+	}
+	*lt = LocalTime{t}
+	return nil
+}
+
+type Event struct {
+	ID   string    `json:"id"`
+	When LocalTime `json:"when"`
+}
+```
+
+---
+
+### C) Dynamic envelope decode with `RawMessage`
+
+```go
+package dyn
+
+import (
+	"encoding/json"
+	"fmt"
+)
+
+type Envelope struct {
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+type UserCreated struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type PaymentCaptured struct {
+	ID     string  `json:"id"`
+	Amount float64 `json:"amount"`
+	Curr   string  `json:"currency"`
+}
+
+func DecodeEnvelope(b []byte) (any, error) {
+	var env Envelope
+	if err := json.Unmarshal(b, &env); err != nil {
+		return nil, fmt.Errorf("envelope: %w", err)
+	}
+	switch env.Type {
+	case "user.created":
+		var uc UserCreated
+		if err := json.Unmarshal(env.Payload, &uc); err != nil {
+			return nil, fmt.Errorf("user.created: %w", err)
+		}
+		return uc, nil
+	case "payment.captured":
+		var pc PaymentCaptured
+		if err := json.Unmarshal(env.Payload, &pc); err != nil {
+			return nil, fmt.Errorf("payment.captured: %w", err)
+		}
+		return pc, nil
+	default:
+		return nil, fmt.Errorf("unknown type %q", env.Type)
+	}
+}
+```
+awesome — Step 10: systems-design (Go edition) 🏗️
+
+We’ll build interview-ready muscle for: clean project layout, dependency injection (sans frameworks), config, logging, and graceful shutdown. Then you’ll code a tiny service skeleton.
+
+# What “good” looks like
+
+* **Layout**
+
+  ```
+  cmd/app/main.go        # wire, parse flags/env, start
+  internal/httpapi/      # handlers (no business logic)
+  internal/service/      # domain services (interfaces + impl)
+  internal/config/       # load/validate config
+  internal/log/          # logger setup (zap/log/slog)
+  ```
+* **DI without frameworks**: define **interfaces** in the *consumer* package; provide concrete impls in *providers*; wire in `main`.
+* **Config**: env → struct, `Validate()` errors early; sensible defaults.
+* **Graceful shutdown**: context, `http.Server.Shutdown`, stop workers, close clients.
+* **Observability**: structured logs, request IDs, healthz/readyz, pprof (opt).
+
+---
+
+## Micro-quiz (quick)
+
+1. Where should you keep interfaces? → **Near the consumer** (e.g., `service` defines what it needs).
+2. Kill the process or return errors on bad config? → **Fail fast at startup.**
+3. How to stop all goroutines on SIGINT? → **Context cancellation** in `main`, plumb `ctx` everywhere.
+
+---
+
+## Coding Task — “TinyStore” service skeleton
+
+### Requirements
+
+* `GET /healthz` → 200 OK
+* `PUT /kv/{key}` with JSON `{"value":"..."}` → stores in memory
+* `GET /kv/{key}` → returns JSON `{"value":"..."}` or 404
+* Config: `PORT` (default 8080), `READ_TIMEOUT_MS` (default 2000)
+* Structured logs with request ID
+* Graceful shutdown on SIGINT/SIGTERM (drain up to 5s)
+
+### Starter: files & TODOs
+
+#### `internal/config/config.go`
+
+```go
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"time"
+)
+
+type Config struct {
+	Port          int
+	ReadTimeout   time.Duration
+	ShutdownGrace time.Duration
+}
+
+func getenv(k, def string) string {
+	if v := os.Getenv(k); v != "" { return v }
+	return def
+}
+
+func Load() (Config, error) {
+	var c Config
+	// PORT
+	if p, err := strconv.Atoi(getenv("PORT", "8080")); err != nil || p <= 0 {
+		return c, fmt.Errorf("invalid PORT")
+	} else { c.Port = p }
+	// READ_TIMEOUT_MS
+	if ms, err := strconv.Atoi(getenv("READ_TIMEOUT_MS", "2000")); err != nil || ms <= 0 {
+		return c, fmt.Errorf("invalid READ_TIMEOUT_MS")
+	} else { c.ReadTimeout = time.Duration(ms) * time.Millisecond }
+	// SHUTDOWN_GRACE_MS
+	if ms, err := strconv.Atoi(getenv("SHUTDOWN_GRACE_MS", "5000")); err != nil || ms <= 0 {
+		return c, fmt.Errorf("invalid SHUTDOWN_GRACE_MS")
+	} else { c.ShutdownGrace = time.Duration(ms) * time.Millisecond }
+	return c, nil
+}
+```
+
+#### `internal/service/store.go`
+
+```go
+package service
+
+import "context"
+
+// Store is defined near its consumer (httpapi) but lives in service layer.
+type Store interface {
+	Put(ctx context.Context, key, value string) error
+	Get(ctx context.Context, key string) (string, bool, error)
+}
+
+type MemStore struct {
+	data map[string]string
+	// TODO: add sync.RWMutex
+}
+
+func NewMemStore() *MemStore {
+	return &MemStore{data: make(map[string]string)}
+}
+
+func (m *MemStore) Put(ctx context.Context, key, value string) error {
+	// TODO: lock; check ctx.Done() optionally; write
+	return nil
+}
+
+func (m *MemStore) Get(ctx context.Context, key string) (string, bool, error) {
+	// TODO: lock; return v, ok, nil
+	return "", false, nil
+}
+```
+
+#### `internal/httpapi/router.go`
+
+```go
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	"example.com/tinystore/internal/service"
+)
+
+type Router struct {
+	s      service.Store
+	logger *slog.Logger
+}
+
+func NewRouter(s service.Store, logger *slog.Logger) *Router {
+	return &Router{s: s, logger: logger}
+}
+
+func (rt *Router) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", rt.health)
+	mux.HandleFunc("PUT /kv/", rt.putKV) // /kv/{key}
+	mux.HandleFunc("GET /kv/", rt.getKV)
+	return rt.withMiddleware(mux)
+}
+
+func (rt *Router) health(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
+type kvReq struct{ Value string `json:"value"` }
+type kvResp struct{ Value string `json:"value"` }
+
+func (rt *Router) putKV(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimPrefix(r.URL.Path, "/kv/")
+	if key == "" { http.Error(w, "missing key", http.StatusBadRequest); return }
+
+	var req kvReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest); return
+	}
+	if req.Value == "" { http.Error(w, "missing value", http.StatusBadRequest); return }
+
+	if err := rt.s.Put(r.Context(), key, req.Value); err != nil {
+		http.Error(w, "store error", http.StatusInternalServerError); return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (rt *Router) getKV(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimPrefix(r.URL.Path, "/kv/")
+	if key == "" { http.Error(w, "missing key", http.StatusBadRequest); return }
+
+	if v, ok, err := rt.s.Get(r.Context(), key); err != nil {
+		http.Error(w, "store error", http.StatusInternalServerError)
+	} else if !ok {
+		http.NotFound(w, r)
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(kvResp{Value: v})
+	}
+}
+
+func (rt *Router) withMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqID := time.Now().UTC().Format("20060102T150405.000000000")
+		ctx := context.WithValue(r.Context(), "reqid", reqID)
+		w.Header().Set("X-Request-ID", reqID)
+		rt.logger.Info("request",
+			"method", r.Method, "path", r.URL.Path, "reqid", reqID,
+			"remote", r.RemoteAddr)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+```
+
+#### `cmd/app/main.go`
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"example.com/tinystore/internal/config"
+	"example.com/tinystore/internal/httpapi"
+	"example.com/tinystore/internal/service"
+)
+
+func main() {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("config", "err", err)
+		os.Exit(1)
+	}
+
+	store := service.NewMemStore()
+	router := httpapi.NewRouter(store, logger)
+
+	srv := &http.Server{
+		Addr:         fmt.Sprintf(":%d", cfg.Port),
+		Handler:      router.Handler(),
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: 5 * time.Second,
+		IdleTimeout:  60 * time.Second,
+		BaseContext: func(_ net.Listener) context.Context {
+			return context.Background()
+		},
+	}
+
+	// start server
+	go func() {
+		logger.Info("http_listen", "addr", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("listen", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	// wait for signal
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	<-sigCh
+	logger.Info("shutdown: signal received")
+
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownGrace)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("graceful_shutdown_failed", "err", err)
+	}
+	logger.Info("bye")
+}
+```
+
+---
+Awesome — here’s the polished, fully-implemented “TinyStore” with mutex-protected memory store, `/readyz` (goes ready after first successful `PUT`), and optional pprof endpoints.
+
+---
+
+### `internal/config/config.go` (same as before)
+
+```go
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"time"
+)
+
+type Config struct {
+	Port          int
+	ReadTimeout   time.Duration
+	ShutdownGrace time.Duration
+}
+
+func getenv(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
+
+func Load() (Config, error) {
+	var c Config
+	if p, err := strconv.Atoi(getenv("PORT", "8080")); err != nil || p <= 0 {
+		return c, fmt.Errorf("invalid PORT")
+	} else {
+		c.Port = p
+	}
+	if ms, err := strconv.Atoi(getenv("READ_TIMEOUT_MS", "2000")); err != nil || ms <= 0 {
+		return c, fmt.Errorf("invalid READ_TIMEOUT_MS")
+	} else {
+		c.ReadTimeout = time.Duration(ms) * time.Millisecond
+	}
+	if ms, err := strconv.Atoi(getenv("SHUTDOWN_GRACE_MS", "5000")); err != nil || ms <= 0 {
+		return c, fmt.Errorf("invalid SHUTDOWN_GRACE_MS")
+	} else {
+		c.ShutdownGrace = time.Duration(ms) * time.Millisecond
+	}
+	return c, nil
+}
+```
+
+---
+
+### `internal/service/store.go` (mutex + context-aware)
+
+```go
+package service
+
+import (
+	"context"
+	"sync"
+)
+
+// Store is the abstraction the HTTP layer depends on.
+type Store interface {
+	Put(ctx context.Context, key, value string) error
+	Get(ctx context.Context, key string) (string, bool, error)
+}
+
+type MemStore struct {
+	mu   sync.RWMutex
+	data map[string]string
+}
+
+func NewMemStore() *MemStore {
+	return &MemStore{data: make(map[string]string)}
+}
+
+func (m *MemStore) Put(ctx context.Context, key, value string) error {
+	// Respect cancellation quickly for long chains (cheap check).
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	m.mu.Lock()
+	m.data[key] = value
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *MemStore) Get(ctx context.Context, key string) (string, bool, error) {
+	select {
+	case <-ctx.Done():
+		return "", false, ctx.Err()
+	default:
+	}
+	m.mu.RLock()
+	v, ok := m.data[key]
+	m.mu.RUnlock()
+	return v, ok, nil
+}
+```
+
+---
+
+### `internal/httpapi/router.go` (handlers + `/readyz` + request-id middleware)
+
+```go
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"example.com/tinystore/internal/service"
+)
+
+type Router struct {
+	s      service.Store
+	logger *slog.Logger
+	ready  atomic.Bool
+}
+
+func NewRouter(s service.Store, logger *slog.Logger) *Router {
+	return &Router{s: s, logger: logger}
+}
+
+func (rt *Router) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", rt.health)
+	mux.HandleFunc("GET /readyz", rt.readyz)
+	mux.HandleFunc("PUT /kv/", rt.putKV) // /kv/{key}
+	mux.HandleFunc("GET /kv/", rt.getKV)
+	return rt.withMiddleware(mux)
+}
+
+func (rt *Router) health(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
+func (rt *Router) readyz(w http.ResponseWriter, _ *http.Request) {
+	if rt.ready.Load() {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready"))
+		return
+	}
+	http.Error(w, "not ready", http.StatusServiceUnavailable)
+}
+
+type kvReq struct{ Value string `json:"value"` }
+type kvResp struct{ Value string `json:"value"` }
+
+func (rt *Router) putKV(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimPrefix(r.URL.Path, "/kv/")
+	if key == "" {
+		http.Error(w, "missing key", http.StatusBadRequest)
+		return
+	}
+	var req kvReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if req.Value == "" {
+		http.Error(w, "missing value", http.StatusBadRequest)
+		return
+	}
+	if err := rt.s.Put(r.Context(), key, req.Value); err != nil {
+		http.Error(w, "store error", http.StatusInternalServerError)
+		return
+	}
+	// Flip readiness after the first successful write.
+	rt.ready.Store(true)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (rt *Router) getKV(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimPrefix(r.URL.Path, "/kv/")
+	if key == "" {
+		http.Error(w, "missing key", http.StatusBadRequest)
+		return
+	}
+	v, ok, err := rt.s.Get(r.Context(), key)
+	if err != nil {
+		http.Error(w, "store error", http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(kvResp{Value: v})
+}
+
+// Middleware: request-id + basic access log
+func (rt *Router) withMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqID := time.Now().UTC().Format("20060102T150405.000000000")
+		ctx := context.WithValue(r.Context(), "reqid", reqID)
+		w.Header().Set("X-Request-ID", reqID)
+		rt.logger.Info("request",
+			"reqid", reqID, "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr,
+		)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+```
+
+---
+
+### `cmd/app/main.go` (graceful shutdown + pprof)
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	_ "net/http/pprof" // registers /debug/pprof on DefaultServeMux
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"example.com/tinystore/internal/config"
+	"example.com/tinystore/internal/httpapi"
+	"example.com/tinystore/internal/service"
+)
+
+func main() {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("config", "err", err)
+		os.Exit(1)
+	}
+
+	store := service.NewMemStore()
+	router := httpapi.NewRouter(store, logger)
+
+	// Root mux to mount both app routes and pprof handlers.
+	root := http.NewServeMux()
+	root.Handle("/", router.Handler())
+	// Because of the blank import, DefaultServeMux already has /debug/pprof/*
+	// Mount it under our root at the same path:
+	root.Handle("/debug/pprof/", http.DefaultServeMux)
+
+	srv := &http.Server{
+		Addr:         fmt.Sprintf(":%d", cfg.Port),
+		Handler:      root,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: 5 * time.Second,
+		IdleTimeout:  60 * time.Second,
+		BaseContext: func(_ net.Listener) context.Context { return context.Background() },
+	}
+
+	// Start server
+	go func() {
+		logger.Info("http_listen", "addr", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("listen", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Wait for shutdown signal
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	<-sigCh
+	logger.Info("shutdown: signal received")
+
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownGrace)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("graceful_shutdown_failed", "err", err)
+	}
+	logger.Info("bye")
+}
+```
+
+---
+
+## Quick run
+
+```bash
+PORT=8080 go run ./cmd/app
+# health
+curl -i localhost:8080/healthz
+# readiness (503 until first PUT)
+curl -i localhost:8080/readyz
+# put & get
+curl -i -X PUT localhost:8080/kv/hello -d '{"value":"world"}' -H 'content-type: application/json'
+curl -s localhost:8080/kv/hello
+# readiness flips to 200 after PUT
+curl -i localhost:8080/readyz
+# pprof home
+curl -s localhost:8080/debug/pprof/
+```
+sweet — Step 11: Algorithms & Data Structures (Go-style) 🧠
+
+We’ll hit the patterns that show up a lot in coding rounds: sliding window, heaps, tries, and graphs. Short theory → runnable starter → you ask for “solution” when ready.
+
+---
+
+# 11A — Sliding Window (strings/arrays)
+
+## Must-know
+
+* Maintain a moving window with counts (map/array), expand `r`, shrink `l`.
+* O(n) if each index moves at most once.
+
+### Task A1: Longest Substring Without Repeating Chars
+
+**Signature:** `func LengthOfLongestSubstring(s string) int` (Unicode-aware by runes)
+
+**Starter:**
+
+```go
+package main
+
+func LengthOfLongestSubstring(s string) int {
+	seen := map[rune]int{} // last index+1
+	best := 0
+	start := 0
+	rs := []rune(s)
+	for i, r := range rs {
+		if j, ok := seen[r]; ok && j > start {
+			start = j
+		}
+		seen[r] = i + 1
+		if cur := i - start + 1; cur > best {
+			best = cur
+		}
+	}
+	return best
+}
+```
+
+*(Already filled — run it; ask “solution explain A1” if you want a quick walkthrough.)*
+
+### Task A2: Minimum Window Substring (classic hard, but hire-signal)
+
+**Signature:** `func MinWindow(s, t string) string` (ASCII is fine in interviews; say so explicitly if you choose bytes)
+
+**Starter:**
+
+```go
+package main
+
+func MinWindow(s, t string) string {
+	if len(t) == 0 { return "" }
+	need := [128]int{}
+	needCount := 0
+	for i := 0; i < len(t); i++ {
+		if need[t[i]] == 0 { needCount++ }
+		need[t[i]]++
+	}
+
+	have := [128]int{}
+	matchKinds := 0
+	bestL, bestR := 0, len(s)+1
+	for l, r := 0, 0; r < len(s); r++ {
+		c := s[r]
+		if need[c] > 0 {
+			have[c]++
+			if have[c] == need[c] { matchKinds++ }
+		}
+		for matchKinds == needCount {
+			if r-l+1 < bestR-bestL { bestL, bestR = l, r+1 }
+			d := s[l]
+			if need[d] > 0 {
+				if have[d] == need[d] { matchKinds-- }
+				have[d]--
+			}
+			l++
+		}
+	}
+	if bestR == len(s)+1 { return "" }
+	return s[bestL:bestR]
+}
+```
+
+---
+
+# 11B — Heaps (top-K / Kth element)
+
+## Must-know
+
+* Use `container/heap`. For Kth largest, keep a **min-heap** of size K.
+* For streaming top-K, push/pop as you go.
+
+### Task B1: Kth Largest in an Array
+
+**Signature:** `func FindKthLargest(nums []int, k int) int`
+
+**Starter:**
+
+```go
+package main
+
+import "container/heap"
+
+type minH []int
+func (h minH) Len() int            { return len(h) }
+func (h minH) Less(i, j int) bool  { return h[i] < h[j] }
+func (h minH) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
+func (h *minH) Push(x any)         { *h = append(*h, x.(int)) }
+func (h *minH) Pop() any           { old := *h; x:=old[len(old)-1]; *h=old[:len(old)-1]; return x }
+
+func FindKthLargest(nums []int, k int) int {
+	h := &minH{}
+	heap.Init(h)
+	for _, v := range nums {
+		heap.Push(h, v)
+		if h.Len() > k {
+			heap.Pop(h)
+		}
+	}
+	return heap.Pop(h).(int)
+}
+```
+
+### Task B2: Top-K Frequent Elements (ints)
+
+**Signature:** `func TopKFrequent(nums []int, k int) []int`
+*(Very similar to Step 3’s words version; want me to drop it? say “solution B2”.)*
+
+---
+
+# 11C — Trie (prefix tree)
+
+## Must-know
+
+* Great for prefix queries, autocomplete, word break.
+* Node: children map/array + `end` flag.
+
+### Task C1: Implement Trie (insert, search, startsWith)
+
+**Signature:** `type Trie struct { ... }` with `Insert`, `Search`, `StartsWith`
+
+**Starter:**
+
+```go
+package main
+
+type Trie struct {
+	end bool
+	ch  [26]*Trie
+}
+
+func Constructor() Trie { return Trie{} }
+
+func (t *Trie) Insert(word string) {
+	cur := t
+	for i := 0; i < len(word); i++ {
+		idx := word[i] - 'a'
+		if cur.ch[idx] == nil {
+			cur.ch[idx] = &Trie{}
+		}
+		cur = cur.ch[idx]
+	}
+	cur.end = true
+}
+
+func (t *Trie) Search(word string) bool {
+	cur := t
+	for i := 0; i < len(word); i++ {
+		idx := word[i] - 'a'
+		if cur.ch[idx] == nil { return false }
+		cur = cur.ch[idx]
+	}
+	return cur.end
+}
+
+func (t *Trie) StartsWith(prefix string) bool {
+	cur := t
+	for i := 0; i < len(prefix); i++ {
+		idx := prefix[i] - 'a'
+		if cur.ch[idx] == nil { return false }
+		cur = cur.ch[idx]
+	}
+	return true
+}
+```
+
+---
+
+# 11D — Graphs (BFS/DFS)
+
+## Must-know
+
+* **BFS** for shortest path in unweighted graphs.
+* **DFS** for connected components, cycle detection, topological sort (DAG).
+* Represent adjacency as `[][]int` or `map[int][]int`.
+
+### Task D1: Number of Islands (grid BFS/DFS)
+
+**Signature:** `func NumIslands(grid [][]byte) int` where `'1'`=land, `'0'`=water
+
+**Starter (DFS):**
+
+```go
+package main
+
+func NumIslands(g [][]byte) int {
+	if len(g) == 0 || len(g[0]) == 0 { return 0 }
+	m, n := len(g), len(g[0])
+	var dfs func(i, j int)
+	dfs = func(i, j int) {
+		if i<0 || j<0 || i>=m || j>=n || g[i][j] != '1' { return }
+		g[i][j] = '0'
+		dfs(i+1,j); dfs(i-1,j); dfs(i,j+1); dfs(i,j-1)
+	}
+	count := 0
+	for i := 0; i < m; i++ {
+		for j := 0; j < n; j++ {
+			if g[i][j] == '1' {
+				count++
+				dfs(i, j)
+			}
+		}
+	}
+	return count
+}
+```
+
+### Task D2: Course Schedule (topological sort, cycle detect)
+
+**Signature:** `func CanFinish(numCourses int, prerequisites [][]int) bool`
+*(Kahn’s BFS or DFS color marking. Ask “solution D2” and I’ll drop a clean Kahn’s algo.)*
+
+---
+
+Awesome — here are polished, ready-to-run solutions for the Step-11 set 👇
+
+---
+
+### A2) Minimum Window Substring (ASCII)
+
+```go
+package main
+
+func MinWindow(s, t string) string {
+	if len(t) == 0 || len(s) < len(t) { return "" }
+
+	var need, have [128]int
+	needKinds := 0
+	for i := 0; i < len(t); i++ {
+		if need[t[i]] == 0 { needKinds++ }
+		need[t[i]]++
+	}
+
+	matchKinds := 0
+	bestL, bestR := 0, len(s)+1
+	for l, r := 0, 0; r < len(s); r++ {
+		c := s[r]
+		if need[c] > 0 {
+			have[c]++
+			if have[c] == need[c] { matchKinds++ }
+		}
+		for matchKinds == needKinds {
+			if r-l+1 < bestR-bestL {
+				bestL, bestR = l, r+1
+			}
+			d := s[l]
+			if need[d] > 0 {
+				if have[d] == need[d] { matchKinds-- }
+				have[d]--
+			}
+			l++
+		}
+	}
+	if bestR == len(s)+1 { return "" }
+	return s[bestL:bestR]
+}
+```
+
+---
+
+### B1) Kth Largest in an Array
+
+```go
+package main
+
+import "container/heap"
+
+type minH []int
+
+func (h minH) Len() int            { return len(h) }
+func (h minH) Less(i, j int) bool  { return h[i] < h[j] }
+func (h minH) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
+func (h *minH) Push(x any)         { *h = append(*h, x.(int)) }
+func (h *minH) Pop() any           { old := *h; x := old[len(old)-1]; *h = old[:len(old)-1]; return x }
+
+func FindKthLargest(nums []int, k int) int {
+	h := &minH{}
+	heap.Init(h)
+	for _, v := range nums {
+		heap.Push(h, v)
+		if h.Len() > k {
+			heap.Pop(h)
+		}
+	}
+	return heap.Pop(h).(int)
+}
+```
+
+---
+
+### B2) Top-K Frequent Elements (ints; freq desc, value asc on tie)
+
+```go
+package main
+
+import (
+	"container/heap"
+)
+
+type pair struct {
+	val  int
+	freq int
+}
+type minHeap []pair // worst at top: smaller freq; on tie, larger value
+
+func (h minHeap) Len() int { return len(h) }
+func (h minHeap) Less(i, j int) bool {
+	if h[i].freq != h[j].freq { return h[i].freq < h[j].freq }
+	return h[i].val > h[j].val
+}
+func (h minHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *minHeap) Push(x any)        { *h = append(*h, x.(pair)) }
+func (h *minHeap) Pop() any          { old := *h; x := old[len(old)-1]; *h = old[:len(old)-1]; return x }
+
+func TopKFrequent(nums []int, k int) []int {
+	if k <= 0 { return nil }
+	count := make(map[int]int, len(nums))
+	for _, v := range nums { count[v]++ }
+
+	h := &minHeap{}
+	heap.Init(h)
+	for v, f := range count {
+		heap.Push(h, pair{v, f})
+		if h.Len() > k { heap.Pop(h) }
+	}
+	out := make([]int, h.Len())
+	for i := len(out)-1; i >= 0; i-- {
+		out[i] = heap.Pop(h).(pair).val
+	}
+	return out
+}
+```
+
+---
+
+### C1) Trie (insert/search/startsWith)
+
+```go
+package main
+
+type Trie struct {
+	end bool
+	ch  [26]*Trie
+}
+
+func Constructor() Trie { return Trie{} }
+
+func (t *Trie) Insert(word string) {
+	cur := t
+	for i := 0; i < len(word); i++ {
+		idx := word[i] - 'a'
+		if cur.ch[idx] == nil { cur.ch[idx] = &Trie{} }
+		cur = cur.ch[idx]
+	}
+	cur.end = true
+}
+
+func (t *Trie) Search(word string) bool {
+	cur := t
+	for i := 0; i < len(word); i++ {
+		idx := word[i] - 'a'
+		if cur.ch[idx] == nil { return false }
+		cur = cur.ch[idx]
+	}
+	return cur.end
+}
+
+func (t *Trie) StartsWith(prefix string) bool {
+	cur := t
+	for i := 0; i < len(prefix); i++ {
+		idx := prefix[i] - 'a'
+		if cur.ch[idx] == nil { return false }
+		cur = cur.ch[idx]
+	}
+	return true
+}
+```
+
+---
+
+### D2) Course Schedule (Topological sort — Kahn’s algorithm)
+
+```go
+package main
+
+func CanFinish(numCourses int, prerequisites [][]int) bool {
+	g := make([][]int, numCourses)
+	in := make([]int, numCourses)
+	for _, pr := range prerequisites {
+		a, b := pr[0], pr[1] // b -> a
+		g[b] = append(g[b], a)
+		in[a]++
+	}
+	q := make([]int, 0, numCourses)
+	for i := 0; i < numCourses; i++ {
+		if in[i] == 0 { q = append(q, i) }
+	}
+	seen := 0
+	for len(q) > 0 {
+		x := q[0]; q = q[1:]
+		seen++
+		for _, nb := range g[x] {
+			in[nb]--
+			if in[nb] == 0 { q = append(q, nb) }
+		}
+	}
+	return seen == numCourses
+}
+```
+awesome — Step 12: Databases & Transactions (Go + SQL) 🗄️
+
+We’ll cover `database/sql` best practices, context, transactions, retries, and a clean repository pattern. Then you’ll code a tiny, runnable repo using SQLite (so you can try it locally). Ask “solution” when you want polished answers.
+
+---
+
+# Must-know (tight)
+
+* Use **`database/sql`** with a driver (`_ "modernc.org/sqlite"` or `lib/pq`, `pgx`).
+* Always pass **`ctx context.Context`** into `QueryContext`, `ExecContext`.
+* **Prepared statements**: either short-lived (`db.PrepareContext` → `Stmt.ExecContext`) or inline placeholders—don’t prematurely micro-opt.
+* **Transactions**: `tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})`, then `tx.Commit()` or `tx.Rollback()`.
+* **Idempotent Rollback**: call `defer tx.Rollback()` right after `BeginTx`—it’s safe if already committed.
+* **Retries**: wrap the whole tx in a retry loop for transient errors (e.g., `serialization_failure`), with backoff and `ctx` cancellation.
+* **Scans**: check for `sql.ErrNoRows`.
+* **Migrations**: run once at startup (e.g., `golang-migrate`), or embed DDL in tests (use `go:embed`).
+
+---
+
+## Micro-quiz
+
+1. Where to pass `ctx`? → **Every DB call** (`ExecContext`, `QueryContext`, `QueryRowContext`).
+2. When to `Rollback`? → **Always defer** after `BeginTx`; commit later if all OK.
+3. Safe way to retry on serialization errors? → **Retry the whole transaction** with backoff until success or `ctx` is done.
+
+---
+
+# Coding Task A — Minimal repository with context (SQLite)
+
+We’ll build a tiny `UserRepo` with CRUD, using SQLite (pure Go driver `modernc.org/sqlite` so it runs anywhere). You can swap to Postgres later without changing the interface.
+
+### Files
+
+#### `internal/db/db.go` — open DB + migrate
+
+```go
+package db
+
+import (
+	"context"
+	"database/sql"
+	_ "modernc.org/sqlite" // pure Go sqlite driver
+)
+
+func Open(ctx context.Context, dsn string) (*sql.DB, error) {
+	// Example DSN: "file:test.db?cache=shared&mode=rwc"
+	conn, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	// reasonable defaults
+	conn.SetMaxOpenConns(10)
+	conn.SetMaxIdleConns(10)
+	return conn, conn.PingContext(ctx)
+}
+
+// Simple bootstrap migration (idempotent)
+const schema = `
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL UNIQUE,
+  name  TEXT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+`
+
+func Migrate(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, schema)
+	return err
+}
+```
+
+#### `internal/repo/user.go` — repository interface + impl
+
+```go
+package repo
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"time"
+)
+
+type User struct {
+	ID        int64
+	Email     string
+	Name      string
+	CreatedAt time.Time
+}
+
+var ErrNotFound = errors.New("not found")
+
+type UserRepo interface {
+	Create(ctx context.Context, email, name string) (int64, error)
+	FindByEmail(ctx context.Context, email string) (*User, error)
+	UpdateName(ctx context.Context, id int64, name string) error
+	Delete(ctx context.Context, id int64) error
+}
+
+type userRepo struct{ db *sql.DB }
+
+func NewUserRepo(db *sql.DB) UserRepo { return &userRepo{db: db} }
+
+func (r *userRepo) Create(ctx context.Context, email, name string) (int64, error) {
+	const q = `INSERT INTO users(email, name) VALUES(?, ?)`
+	res, err := r.db.ExecContext(ctx, q, email, name)
+	if err != nil { return 0, err }
+	return res.LastInsertId()
+}
+
+func (r *userRepo) FindByEmail(ctx context.Context, email string) (*User, error) {
+	const q = `SELECT id, email, name, created_at FROM users WHERE email = ?`
+	var u User
+	err := r.db.QueryRowContext(ctx, q, email).
+		Scan(&u.ID, &u.Email, &u.Name, &u.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) { return nil, ErrNotFound }
+	return &u, err
+}
+
+func (r *userRepo) UpdateName(ctx context.Context, id int64, name string) error {
+	const q = `UPDATE users SET name = ? WHERE id = ?`
+	res, err := r.db.ExecContext(ctx, q, name, id)
+	if err != nil { return err }
+	aff, _ := res.RowsAffected()
+	if aff == 0 { return ErrNotFound }
+	return nil
+}
+
+func (r *userRepo) Delete(ctx context.Context, id int64) error {
+	const q = `DELETE FROM users WHERE id = ?`
+	res, err := r.db.ExecContext(ctx, q, id)
+	if err != nil { return err }
+	aff, _ := res.RowsAffected()
+	if aff == 0 { return ErrNotFound }
+	return nil
+}
+```
+
+---
+
+# Coding Task B — Transaction with retry (transfer pattern)
+
+Wrap your logic in a function that runs within a **serializable** transaction and **retries** on transient errors. We’ll simulate with two tables (`wallets` & `transfers`) and a money transfer.
+
+#### `internal/repo/tx_retry.go` — generic retry helper
+
+```go
+package repo
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"time"
+)
+
+type TxFunc func(ctx context.Context, tx *sql.Tx) error
+
+// Example transient detection; adjust per driver (e.g., PostgreSQL code "40001").
+func isRetryable(err error) bool {
+	// For SQLite with WAL busy/locked:
+	if err == nil { return false }
+	msg := err.Error()
+	return containsAny(msg, "database is locked", "busy", "deadlock", "serialization")
+}
+
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if len(sub) > 0 && (len(s) >= len(sub)) && (indexOf(s, sub) >= 0) {
+			return true
+		}
+	}
+	return false
+}
+func indexOf(s, sub string) int {
+	// tiny helper (avoid strings import here)
+outer:
+	for i := 0; i+len(sub) <= len(s); i++ {
+		for j := 0; j < len(sub); j++ {
+			if s[i+j] != sub[j] { continue outer }
+		}
+		return i
+	}
+	return -1
+}
+
+// WithTxRetry runs fn inside a transaction, retrying on retryable errors with backoff.
+func WithTxRetry(ctx context.Context, db *sql.DB, iso sql.IsolationLevel, max int, base time.Duration, fn TxFunc) error {
+	if max <= 0 { max = 1 }
+	var last error
+	for attempt := 1; attempt <= max; attempt++ {
+		if err := ctx.Err(); err != nil { return err }
+
+		tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: iso})
+		if err != nil { return err }
+		// Always rollback; commit later on success
+		defer tx.Rollback()
+
+		if err := fn(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			last = err
+			if !isRetryable(err) || attempt == max {
+				return last
+			}
+			d := base << (attempt - 1)
+			timer := time.NewTimer(d)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+			continue
+		}
+		if err := tx.Commit(); err != nil {
+			last = err
+			if !isRetryable(err) || attempt == max {
+				return last
+			}
+			d := base << (attempt - 1)
+			timer := time.NewTimer(d)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+			continue
+		}
+		return nil
+	}
+	return last
+}
+```
+
+#### `internal/repo/wallet.go` — a transactional operation
+
+```go
+package repo
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"time"
+)
+
+type WalletRepo struct{ db *sql.DB }
+
+func NewWalletRepo(db *sql.DB) *WalletRepo { return &WalletRepo{db: db} }
+
+func (r *WalletRepo) Migrate(ctx context.Context) error {
+	const ddl = `
+CREATE TABLE IF NOT EXISTS wallets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner TEXT NOT NULL UNIQUE,
+  balance INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS transfers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  from_id INTEGER NOT NULL,
+  to_id   INTEGER NOT NULL,
+  amount  INTEGER NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`
+	_, err := r.db.ExecContext(ctx, ddl)
+	return err
+}
+
+// Transfer moves amount (cents) from 'from' to 'to' with SERIALIZABLE isolation & retry.
+func (r *WalletRepo) Transfer(ctx context.Context, fromOwner, toOwner string, amount int64) error {
+	if amount <= 0 { return errors.New("amount must be > 0") }
+
+	loadWallet := func(tx *sql.Tx, owner string) (id int64, balance int64, err error) {
+		err = tx.QueryRowContext(ctx, `SELECT id, balance FROM wallets WHERE owner = ?`, owner).Scan(&id, &balance)
+		return
+	}
+	updateBalance := func(tx *sql.Tx, id int64, delta int64) error {
+		_, err := tx.ExecContext(ctx, `UPDATE wallets SET balance = balance + ? WHERE id = ?`, delta, id)
+		return err
+	}
+	insertTransfer := func(tx *sql.Tx, fromID, toID, amt int64) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO transfers(from_id,to_id,amount,created_at) VALUES(?,?,?,?)`,
+			fromID, toID, amt, time.Now())
+		return err
+	}
+
+	return WithTxRetry(ctx, r.db, sql.LevelSerializable, 4, 50*time.Millisecond, func(ctx context.Context, tx *sql.Tx) error {
+		fromID, fromBal, err := loadWallet(tx, fromOwner)
+		if err != nil { return err }
+		toID, _, err := loadWallet(tx, toOwner)
+		if err != nil { return err }
+		if fromBal < amount { return errors.New("insufficient funds") }
+
+		if err := updateBalance(tx, fromID, -amount); err != nil { return err }
+		if err := updateBalance(tx, toID, amount); err != nil { return err }
+		if err := insertTransfer(tx, fromID, toID, amount); err != nil { return err }
+		return nil
+	})
+}
+```
+
+---
+
+# Coding Task C — Wire it in `main.go` and demo
+
+A tiny CLI that:
+
+1. opens DB, migrates,
+2. creates two wallets if missing,
+3. performs a transfer inside a retrying transaction,
+4. prints balances.
+
+```go
+package main
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"os"
+	"time"
+
+	"example.com/app/internal/db"
+	"example.com/app/internal/repo"
+)
+
+func ensureWallet(ctx context.Context, dbx *sql.DB, owner string, balance int64) error {
+	// upsert-ish (SQLite)
+	_, err := dbx.ExecContext(ctx,
+		`INSERT INTO wallets(owner, balance) VALUES(?, ?)
+		 ON CONFLICT(owner) DO NOTHING`, owner, balance)
+	return err
+}
+
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	dsn := "file:test.db?cache=shared&mode=rwc"
+	conn, err := db.Open(ctx, dsn)
+	if err != nil { panic(err) }
+	if err := db.Migrate(ctx, conn); err != nil { panic(err) }
+
+	ur := repo.NewUserRepo(conn)
+	wr := repo.NewWalletRepo(conn)
+	if err := wr.Migrate(ctx); err != nil { panic(err) }
+
+	// demo data
+	_ = ensureWallet(ctx, conn, "alice", 10_000)
+	_ = ensureWallet(ctx, conn, "bob", 2_000)
+
+	// user demo
+	if _, err := ur.Create(ctx, "alice@example.com", "Alice"); err != nil {
+		// ignore dup for demo
+	}
+
+	// transfer 1500
+	if err := wr.Transfer(ctx, "alice", "bob", 1500); err != nil {
+		fmt.Fprintln(os.Stderr, "transfer error:", err)
+	}
+
+	// read balances
+	var a, b int64
+	_ = conn.QueryRowContext(ctx, `SELECT balance FROM wallets WHERE owner = ?`, "alice").Scan(&a)
+	_ = conn.QueryRowContext(ctx, `SELECT balance FROM wallets WHERE owner = ?`, "bob").Scan(&b)
+	fmt.Println("alice:", a, "bob:", b)
+}
+```
+
+---
+
+## Try it
+
+```bash
+go mod init example.com/app
+go get modernc.org/sqlite
+go run ./cmd/app    # or wherever you place main.go
+```
+
+---
+Sweet — here’s the tightened, production-lean Step-12 “solution” set:
+
+---
+
+# 1) Safer `WithTxRetry` (driver-aware, readable, testable)
+
+* Uses `strings.Contains` (fast, simple).
+* Knows common transient markers for **SQLite** (busy/locked) and **Postgres** (SQLSTATE `40001`, `40P01`).
+* Retries whole tx with exponential backoff; honors `ctx`.
+
+```go
+// internal/repo/tx_retry.go
+package repo
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"strings"
+	"time"
+)
+
+type TxFunc func(ctx context.Context, tx *sql.Tx) error
+
+// isRetryable: adjust markers for your driver(s).
+func isRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	// SQLite transient conditions (WAL busy/locked)
+	if strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database is busy") ||
+		strings.Contains(msg, "busy") ||
+		strings.Contains(msg, "locked") {
+		return true
+	}
+	// PostgreSQL: serialization failure, deadlock detected
+	// sqlstate 40001 (serialization_failure), 40P01 (deadlock_detected)
+	if strings.Contains(msg, "SQLSTATE 40001") ||
+		strings.Contains(msg, "SQLSTATE 40P01") ||
+		strings.Contains(strings.ToLower(msg), "serialization") ||
+		strings.Contains(strings.ToLower(msg), "deadlock") {
+		return true
+	}
+	return false
+}
+
+// WithTxRetry runs fn inside a transaction with retry/backoff on transient errors.
+// iso may be ignored by some drivers (e.g., SQLite), but it’s kept for portability.
+func WithTxRetry(ctx context.Context, db *sql.DB, iso sql.IsolationLevel, max int, base time.Duration, fn TxFunc) error {
+	if max <= 0 {
+		max = 1
+	}
+	var last error
+	for attempt := 1; attempt <= max; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: iso})
+		if err != nil {
+			// driver may expose transient errors at BeginTx too
+			if isRetryable(err) && attempt < max {
+				if err := backoffWait(ctx, base, attempt); err != nil {
+					return err
+				}
+				continue
+			}
+			return err
+		}
+
+		// Ensure rollback if fn panics/returns error
+		committed := false
+		defer func() {
+			if !committed {
+				_ = tx.Rollback()
+			}
+		}()
+
+		if err := fn(ctx, tx); err != nil {
+			last = err
+			_ = tx.Rollback()
+			if isRetryable(err) && attempt < max {
+				if err := backoffWait(ctx, base, attempt); err != nil {
+					return err
+				}
+				continue
+			}
+			return last
+		}
+
+		if err := tx.Commit(); err != nil {
+			last = err
+			if isRetryable(err) && attempt < max {
+				if err := backoffWait(ctx, base, attempt); err != nil {
+					return err
+				}
+				continue
+			}
+			return last
+		}
+		committed = true
+		return nil
+	}
+	return last
+}
+
+func backoffWait(ctx context.Context, base time.Duration, attempt int) error {
+	d := base << (attempt - 1) // base, 2*base, 4*base, ...
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+```
+
+---
+
+# 2) Postgres-ready repository SQL (placeholders & isolation)
+
+When you switch to Postgres, change only SQL placeholders (`$1,$2,...`) and (optionally) isolation level to `sql.LevelSerializable`.
+
+### Users repo (Postgres form)
+
+```go
+// internal/repo/user_pg.go
+package repo
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"time"
+)
+
+type User struct {
+	ID        int64
+	Email     string
+	Name      string
+	CreatedAt time.Time
+}
+
+var ErrNotFound = errors.New("not found")
+
+type UserRepo interface {
+	Create(ctx context.Context, email, name string) (int64, error)
+	FindByEmail(ctx context.Context, email string) (*User, error)
+	UpdateName(ctx context.Context, id int64, name string) error
+	Delete(ctx context.Context, id int64) error
+}
+
+type userRepoPG struct{ db *sql.DB }
+
+func NewUserRepoPG(db *sql.DB) UserRepo { return &userRepoPG{db: db} }
+
+func (r *userRepoPG) Create(ctx context.Context, email, name string) (int64, error) {
+	const q = `INSERT INTO users(email, name) VALUES($1, $2) RETURNING id`
+	var id int64
+	if err := r.db.QueryRowContext(ctx, q, email, name).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+func (r *userRepoPG) FindByEmail(ctx context.Context, email string) (*User, error) {
+	const q = `SELECT id, email, name, created_at FROM users WHERE email = $1`
+	var u User
+	err := r.db.QueryRowContext(ctx, q, email).Scan(&u.ID, &u.Email, &u.Name, &u.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &u, err
+}
+func (r *userRepoPG) UpdateName(ctx context.Context, id int64, name string) error {
+	const q = `UPDATE users SET name = $1 WHERE id = $2`
+	res, err := r.db.ExecContext(ctx, q, name, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+func (r *userRepoPG) Delete(ctx context.Context, id int64) error {
+	const q = `DELETE FROM users WHERE id = $1`
+	res, err := r.db.ExecContext(ctx, q, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+```
+
+### Wallet transfer (SQLite SQL kept; for Postgres swap `?` → `$1..$n`)
+
+```go
+// internal/repo/wallet.go (SQLite placeholders)
+package repo
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"time"
+)
+
+type WalletRepo struct{ db *sql.DB }
+
+func NewWalletRepo(db *sql.DB) *WalletRepo { return &WalletRepo{db: db} }
+
+func (r *WalletRepo) Migrate(ctx context.Context) error {
+	const ddl = `
+CREATE TABLE IF NOT EXISTS wallets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner TEXT NOT NULL UNIQUE,
+  balance INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS transfers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  from_id INTEGER NOT NULL,
+  to_id   INTEGER NOT NULL,
+  amount  INTEGER NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`
+	_, err := r.db.ExecContext(ctx, ddl)
+	return err
+}
+
+func (r *WalletRepo) Transfer(ctx context.Context, fromOwner, toOwner string, amount int64) error {
+	if amount <= 0 {
+		return errors.New("amount must be > 0")
+	}
+	load := func(tx *sql.Tx, owner string) (id, bal int64, err error) {
+		err = tx.QueryRowContext(ctx, `SELECT id, balance FROM wallets WHERE owner = ?`, owner).Scan(&id, &bal)
+		return
+	}
+	credit := func(tx *sql.Tx, id, delta int64) error {
+		_, err := tx.ExecContext(ctx, `UPDATE wallets SET balance = balance + ? WHERE id = ?`, delta, id)
+		return err
+	}
+	logXfer := func(tx *sql.Tx, fromID, toID, amt int64) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO transfers(from_id,to_id,amount,created_at) VALUES(?,?,?,?)`,
+			fromID, toID, amt, time.Now())
+		return err
+	}
+
+	return WithTxRetry(ctx, r.db, sql.LevelSerializable, 4, 50*time.Millisecond, func(ctx context.Context, tx *sql.Tx) error {
+		fromID, fromBal, err := load(tx, fromOwner)
+		if err != nil {
+			return err
+		}
+		toID, _, err := load(tx, toOwner)
+		if err != nil {
+			return err
+		}
+		if fromBal < amount {
+			return errors.New("insufficient funds")
+		}
+		if err := credit(tx, fromID, -amount); err != nil {
+			return err
+		}
+		if err := credit(tx, toID, amount); err != nil {
+			return err
+		}
+		if err := logXfer(tx, fromID, toID, amount); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+```
+
+> **Postgres swap**: change `?` to `$1..$n` in all `ExecContext`/`QueryRowContext`.
+
+---
+
+# 3) Fast integration tests (SQLite), table-driven & isolated
+
+## 3.1 Users repo tests
+
+```go
+// internal/repo/user_sqlite_test.go
+package repo
+
+import (
+	"context"
+	"database/sql"
+	"testing"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+func openTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:test_users.db?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.Exec(`
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL UNIQUE,
+  name  TEXT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func TestUserRepo_BasicCRUD(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	db := openTestDB(t)
+	r := NewUserRepo(db) // the SQLite/placeholder (?) implementation
+
+	// Create
+	id, err := r.Create(ctx, "a@x.z", "Alice")
+	if err != nil || id == 0 {
+		t.Fatalf("create err=%v id=%d", err, id)
+	}
+
+	// Find
+	u, err := r.FindByEmail(ctx, "a@x.z")
+	if err != nil || u == nil || u.Name != "Alice" {
+		t.Fatalf("find err=%v u=%+v", err, u)
+	}
+
+	// Update
+	if err := r.UpdateName(ctx, u.ID, "Alicia"); err != nil {
+		t.Fatalf("update err=%v", err)
+	}
+	u2, _ := r.FindByEmail(ctx, "a@x.z")
+	if u2.Name != "Alicia" {
+		t.Fatalf("update failed got=%s", u2.Name)
+	}
+
+	// Delete
+	if err := r.Delete(ctx, u.ID); err != nil {
+		t.Fatalf("delete err=%v", err)
+	}
+	if _, err := r.FindByEmail(ctx, "a@x.z"); !errorsIs(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
+func errorsIs(err, target error) bool {
+	if err == nil && target == nil {
+		return true
+	}
+	return err != nil && target != nil && (err == target)
+}
+```
+
+> Note: For brevity, `errorsIs` is a tiny helper; in real code use `errors.Is`.
+
+## 3.2 Wallet transfer happy-path + insufficient funds
+
+```go
+// internal/repo/wallet_sqlite_test.go
+package repo
+
+import (
+	"context"
+	"database/sql"
+	"testing"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+func openWalletDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:test_wallets.db?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func TestWalletTransfer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	db := openWalletDB(t)
+	w := NewWalletRepo(db)
+	if err := w.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// seed
+	_, _ = db.ExecContext(ctx, `INSERT INTO wallets(owner,balance) VALUES(?,?),(?,?)`, "alice", 10_000, "bob", 2_000)
+
+	// transfer
+	if err := w.Transfer(ctx, "alice", "bob", 1500); err != nil {
+		t.Fatalf("transfer err=%v", err)
+	}
+
+	var a, b int64
+	_ = db.QueryRowContext(ctx, `SELECT balance FROM wallets WHERE owner=?`, "alice").Scan(&a)
+	_ = db.QueryRowContext(ctx, `SELECT balance FROM wallets WHERE owner=?`, "bob").Scan(&b)
+
+	if a != 8500 || b != 3500 {
+		t.Fatalf("bad balances alice=%d bob=%d", a, b)
+	}
+}
+
+func TestWalletTransfer_Insufficient(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	db := openWalletDB(t)
+	w := NewWalletRepo(db)
+	_ = w.Migrate(ctx)
+
+	_, _ = db.ExecContext(ctx, `INSERT INTO wallets(owner,balance) VALUES(?,?),(?,?)`, "alice", 100, "bob", 0)
+
+	if err := w.Transfer(ctx, "alice", "bob", 150); err == nil {
+		t.Fatalf("expected insufficient funds error")
+	}
+}
+```
+
+Run:
+
+```bash
+go test ./internal/repo -v
+```
+
+---
+
+# 4) Quick notes for production swaps
+
+* **Postgres driver**: prefer `github.com/jackc/pgx/v5/stdlib` (`sql` compatible). DSN like:
+
+  ```
+  pgx://user:pass@host:5432/dbname?sslmode=disable
+  ```
+* **Placeholders**: change `?` → `$1,$2,...`.
+* **Isolation**: use `sql.LevelSerializable` for money moves; adjust retry markers.
+* **Migrations**: replace ad-hoc DDL with `golang-migrate` (idempotent versioned files).
+* **Time**: prefer `TIMESTAMPTZ` and store UTC; convert at edges.
+
+---
+
+awesome — Step 13: HTTP clients & servers at scale 🌐
+
+# Must-know (crisp)
+
+* **Timeouts everywhere**: dial, TLS handshake, idle, per-request. Prefer context deadlines + client timeouts.
+* **One `http.Client` per base config** (reused). Don’t make a new client per request.
+* **Transport tuning**: keep-alives on, connection pooling sane.
+* **Retries**: only idempotent/SAFE methods (GET/HEAD/PUT/DELETE) and only on transient errors/statuses.
+* **Middleware** for servers: logging, request ID, panic recover, rate limit.
+* **Graceful shutdown**: drain with `Server.Shutdown(ctx)`.
+
+---
+
+## Coding Task A — Production-ready HTTP client (timeouts + retries + backoff)
+
+Create a small client package you can drop in any service.
+
+```go
+package hclient
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net"
+	"net/http"
+	"time"
+)
+
+type Client struct {
+	c        *http.Client
+	baseURL  string
+	retries  int
+	backoff  time.Duration
+	idempotent map[string]bool
+}
+
+func New(base string, timeout time.Duration) *Client {
+	tr := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		MaxIdleConns:          200,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       90 * time.Second,
+	}
+	return &Client{
+		c: &http.Client{
+			Transport: tr,
+			Timeout:   timeout, // hard cap per request
+		},
+		baseURL: base,
+		retries: 2,
+		backoff: 100 * time.Millisecond,
+		idempotent: map[string]bool{"GET": true, "HEAD": true, "PUT": true, "DELETE": true},
+	}
+}
+
+func (cl *Client) do(ctx context.Context, req *http.Request) (*http.Response, error) {
+	req = req.WithContext(ctx)
+	try := 0
+	for {
+		resp, err := cl.c.Do(req)
+		if err == nil && (resp.StatusCode < 500 && resp.StatusCode != 429) {
+			return resp, nil
+		}
+		// decide retry?
+		if !(cl.idempotent[req.Method]) { // non-idempotent => no retry
+			if err != nil { return nil, err }
+			return resp, nil
+		}
+		if try >= cl.retries {
+			if err != nil { return nil, err }
+			return resp, nil
+		}
+		// close body before retry to free conn
+		if resp != nil && resp.Body != nil { io.CopyN(io.Discard, resp.Body, 512); resp.Body.Close() }
+		// backoff
+		d := cl.backoff << try
+		timer := time.NewTimer(d)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+			try++
+		}
+	}
+}
+```
+
+Usage:
+
+```go
+// ctx has deadline; GET /v1/info
+// resp.Body must be closed by caller.
+```
+
+---
+
+## Coding Task B — Server middleware stack (recover, reqID, logging, rate-limit)
+
+Drop-in middleware for `net/http`.
+
+```go
+package mid
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"runtime/debug"
+	"sync/atomic"
+	"time"
+)
+
+type key string
+const reqIDKey key = "reqid"
+
+func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
+			defer func() {
+				if rec := recover(); rec != nil {
+					logger.Error("panic", "err", rec, "stack", string(debug.Stack()))
+					http.Error(w, "internal error", http.StatusInternalServerError)
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func RequestID(logger *slog.Logger) func(http.Handler) http.Handler {
+	var seq uint64
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
+			id := time.Now().UTC().Format("20060102T150405.000000000") + "-" + itoa(atomic.AddUint64(&seq,1))
+			ctx := context.WithValue(r.Context(), reqIDKey, id)
+			w.Header().Set("X-Request-ID", id)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+func itoa(n uint64) string { return fmt.Sprintf("%d", n) } // tiny helper (add fmt import)
+
+type respWriter struct{ http.ResponseWriter; code int; bytes int64 }
+func (w *respWriter) WriteHeader(c int){ w.code=c; w.ResponseWriter.WriteHeader(c) }
+func (w *respWriter) Write(b []byte)(int,error){ n,err:=w.ResponseWriter.Write(b); w.bytes+=int64(n); return n,err }
+
+func AccessLog(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
+			start := time.Now()
+			lw := &respWriter{ResponseWriter: w, code: 200}
+			next.ServeHTTP(lw, r)
+			logger.Info("req",
+				"method", r.Method, "path", r.URL.Path, "code", lw.code,
+				"bytes", lw.bytes, "dur_ms", time.Since(start).Milliseconds(),
+			)
+		})
+	}
+}
+
+func RateLimit(qps int, burst int) func(http.Handler) http.Handler {
+	tokens := make(chan struct{}, burst)
+	// fill bucket
+	for i:=0;i<burst;i++ { tokens <- struct{}{} }
+	ticker := time.NewTicker(time.Second / time.Duration(qps))
+	go func(){
+		for range ticker.C {
+			select { case tokens <- struct{}{}: default: }
+		}
+	}()
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
+			select {
+			case <-tokens: next.ServeHTTP(w, r)
+			default: http.Error(w, "rate limit", http.StatusTooManyRequests)
+			}
+		})
+	}
+}
+```
+
+Wire:
+
+```go
+stack := mid.Recover(logger)(mid.RequestID(logger)(mid.AccessLog(logger)(mid.RateLimit(50,100)(mux))))
+srv := &http.Server{ Handler: stack, /* timeouts... */ }
+```
+
+---
+
+## Coding Task C — Graceful server with *per-request* deadlines
+
+Make the server enforce a deadline on handlers that forget to set one.
+
+```go
+package srv
+
+import (
+	"context"
+	"net/http"
+	"time"
+)
+
+func WithDefaultDeadline(d time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
+			// If caller already set a deadline, respect it.
+			if _, ok := r.Context().Deadline(); ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), d)
+			defer cancel()
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+```
+
+And graceful shutdown (pattern recap):
+
+```go
+// start srv in goroutine; on SIGINT/SIGTERM:
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+_ = srv.Shutdown(ctx) // close listeners, drain in-flight
+```
+
+---
+Here you go — polished, drop-in solutions for all three 👇
+
+---
+
+## A) Production-ready HTTP client (timeouts + retries + JSON helper)
+
+```go
+package hclient
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net"
+	"net/http"
+	"time"
+)
+
+type Client struct {
+	c          *http.Client
+	baseURL    string
+	retries    int
+	backoff    time.Duration
+	idempotent map[string]bool
+}
+
+func New(base string, perRequestTimeout time.Duration) *Client {
+	tr := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		MaxIdleConns:          200,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       90 * time.Second,
+	}
+	return &Client{
+		c: &http.Client{
+			Transport: tr,
+			Timeout:   perRequestTimeout, // hard cap per request (includes redirects)
+		},
+		baseURL: base,
+		retries: 2,
+		backoff: 100 * time.Millisecond,
+		idempotent: map[string]bool{
+			http.MethodGet:    true,
+			http.MethodHead:   true,
+			http.MethodPut:    true,
+			http.MethodDelete: true,
+		},
+	}
+}
+
+// Do issues the request with retry/backoff on transient 5xx/429 or network errors,
+// only for idempotent methods. Caller must close resp.Body.
+func (cl *Client) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
+	req = req.WithContext(ctx)
+	try := 0
+	for {
+		resp, err := cl.c.Do(req)
+		// Success path (non-retriable statuses)
+		if err == nil && resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+			return resp, nil
+		}
+		// Non-idempotent? return immediately.
+		if !cl.idempotent[req.Method] {
+			if err != nil {
+				return nil, err
+			}
+			return resp, nil
+		}
+		// Out of retries? return last result.
+		if try >= cl.retries {
+			if err != nil {
+				return nil, err
+			}
+			return resp, nil
+		}
+		// Clean up connection before retry.
+		if resp != nil && resp.Body != nil {
+			_, _ = io.CopyN(io.Discard, resp.Body, 512)
+			_ = resp.Body.Close()
+		}
+		// Exponential backoff with context.
+		d := cl.backoff << try
+		timer := time.NewTimer(d)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+			try++
+		}
+	}
+}
+
+// JSON is a convenience to decode JSON body and always close it.
+func JSON[T any](resp *http.Response, v *T) error {
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _ = io.CopyN(io.Discard, resp.Body, 1024)
+		return errors.New(resp.Status)
+	}
+	return json.NewDecoder(resp.Body).Decode(v)
+}
+```
+
+**Tiny usage demo**
+
+```go
+// ctx has deadline
+req, _ := http.NewRequest(http.MethodGet, "https://api.example.com/v1/info", nil)
+resp, err := client.Do(ctx, req)
+if err != nil { /* handle */ }
+var out map[string]any
+if err := hclient.JSON(resp, &out); err != nil { /* handle */ }
+```
+
+---
+
+## B) Server middleware stack (recover, reqID, access log, rate limit)
+
+```go
+package mid
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"runtime/debug"
+	"sync/atomic"
+	"time"
+)
+
+type ctxKey string
+
+const ReqIDKey ctxKey = "reqid"
+
+func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					logger.Error("panic", "err", rec, "stack", string(debug.Stack()))
+					http.Error(w, "internal error", http.StatusInternalServerError)
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func RequestID() func(http.Handler) http.Handler {
+	var seq uint64
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id := time.Now().UTC().Format("20060102T150405.000000000") + "-" + fmt.Sprintf("%d", atomic.AddUint64(&seq, 1))
+			ctx := context.WithValue(r.Context(), ReqIDKey, id)
+			w.Header().Set("X-Request-ID", id)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+type respWriter struct {
+	http.ResponseWriter
+	code  int
+	bytes int64
+}
+
+func (w *respWriter) WriteHeader(c int) { w.code = c; w.ResponseWriter.WriteHeader(c) }
+func (w *respWriter) Write(b []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(b)
+	w.bytes += int64(n)
+	return n, err
+}
+
+func AccessLog(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			lw := &respWriter{ResponseWriter: w, code: 200}
+			next.ServeHTTP(lw, r)
+			logger.Info("http",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"code", lw.code,
+				"bytes", lw.bytes,
+				"dur_ms", time.Since(start).Milliseconds(),
+			)
+		})
+	}
+}
+
+func RateLimit(qps, burst int) func(http.Handler) http.Handler {
+	tokens := make(chan struct{}, burst)
+	for i := 0; i < burst; i++ {
+		tokens <- struct{}{}
+	}
+	ticker := time.NewTicker(time.Second / time.Duration(qps))
+	go func() {
+		for range ticker.C {
+			select {
+			case tokens <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-tokens:
+				next.ServeHTTP(w, r)
+			default:
+				http.Error(w, "rate limit", http.StatusTooManyRequests)
+			}
+		})
+	}
+}
+```
+
+**Wiring example**
+
+```go
+stack := mid.Recover(logger)(mid.RequestID()(mid.AccessLog(logger)(mid.RateLimit(50, 100)(mux))))
+srv := &http.Server{ Handler: stack /* + timeouts */ }
+```
+
+---
+
+## C) Full server `main.go` with per-request deadline + graceful shutdown
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"example.com/app/mid"
+)
+
+// WithDefaultDeadline adds a deadline if the incoming context has none.
+func WithDefaultDeadline(d time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := r.Context().Deadline(); ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), d)
+			defer cancel()
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+func main() {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
+
+	// Handlers
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK); _, _ = w.Write([]byte("ok")) })
+	mux.HandleFunc("GET /hello", func(w http.ResponseWriter, r *http.Request) {
+		// simulate small work respecting ctx
+		select {
+		case <-time.After(100 * time.Millisecond):
+			fmt.Fprint(w, "hello")
+		case <-r.Context().Done():
+			http.Error(w, "deadline/cancel", http.StatusGatewayTimeout)
+		}
+	})
+
+	// Middleware stack
+	handler := mid.Recover(logger)(
+		mid.RequestID()(
+			mid.AccessLog(logger)(
+				mid.RateLimit(100, 200)(
+					WithDefaultDeadline(2*time.Second)(mux),
+				),
+			),
+		),
+	)
+
+	srv := &http.Server{
+		Addr:         ":8080",
+		Handler:      handler,
+		ReadTimeout:  3 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		IdleTimeout:  60 * time.Second,
+		BaseContext: func(_ net.Listener) context.Context { return context.Background() },
+	}
+
+	// Start
+	go func() {
+		logger.Info("http_listen", "addr", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("listen", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Graceful shutdown on SIGINT/SIGTERM
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	<-sigCh
+	logger.Info("shutdown: signal received")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("shutdown_failed", "err", err)
+	}
+	logger.Info("bye")
+}
+```
+
+**Try it**
+
+```bash
+go run ./cmd/app
+curl -i localhost:8080/healthz
+curl -i localhost:8080/hello
+```
+
+---
+
+nice — Step 14: advanced concurrency patterns ⚙️
+
+We’ll level-up with context propagation through pipelines, backpressure, `errgroup`, sharded workers, and resilience (circuit breaker + singleflight). I’ll give crisp theory + runnable starters. When you want me to drop polished reference implementations, just say **“solution”** (or “solution A/B/C”).
+
+---
+
+# 14A — Context-propagated pipeline with backpressure (and `errgroup`)
+
+**Goal:** Read items → parse/transform (bounded parallelism) → write out, all cancellable via `ctx`. Use a bounded channel between stages to enforce *backpressure* so producers can’t outrun consumers.
+
+**Key points**
+
+* Use `errgroup.WithContext` to tie goroutines to a single cancel cause.
+* Make stage buffers **bounded** (`make(chan T, N)`), not unbounded.
+* Always `close(out)` when the producing stage ends.
+
+**Starter**
+
+```go
+package pipeline
+
+import (
+	"context"
+	"errors"
+	"golang.org/x/sync/errgroup"
+)
+
+type In struct{ Raw string }
+type Out struct{ Val int }
+
+type Transformer func(context.Context, In) (Out, error)
+type Sink func(context.Context, Out) error
+
+// Run: src -> transform (M workers) -> sink; stop on first error or ctx cancel.
+func Run(ctx context.Context, src <-chan In, workers, buf int, transform Transformer, sink Sink) error {
+	if workers <= 0 { workers = 1 }
+	if buf <= 0 { buf = workers * 2 }
+
+	g, ctx := errgroup.WithContext(ctx)
+
+	// stage 1 output to stage 2
+	mid := make(chan Out, buf)
+
+	// Stage 2: M transformer workers consume from src, produce to mid.
+	g.Go(func() error {
+		defer close(mid)
+		// fan-out
+		wg, _ := errgroup.WithContext(ctx)
+		for i := 0; i < workers; i++ {
+			wg.Go(func() error {
+				for {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case x, ok := <-src:
+						if !ok {
+							return nil
+						}
+						y, err := transform(ctx, x)
+						if err != nil {
+							return err
+						}
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						case mid <- y:
+						}
+					}
+				}
+			})
+		}
+		return wg.Wait()
+	})
+
+	// Stage 3: sink serially (or you can also parallelize if sink is safe).
+	g.Go(func() error {
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case y, ok := <-mid:
+				if !ok { return nil }
+				if err := sink(ctx, y); err != nil { return err }
+			}
+		}
+	})
+
+	return g.Wait()
+}
+
+// Example helpers for tests/demos
+var ErrBad = errors.New("bad")
+```
+
+---
+
+# 14B — Circuit Breaker (closed → open → half-open)
+
+**Goal:** Wrap an arbitrary `func(ctx) error` so repeated failures **open** the breaker (fast-fail), then a timed **half-open** lets one probe attempt through to close on success or re-open on failure.
+
+**State machine**
+
+* **Closed**: pass all calls. Count rolling failures; if `>= threshold`, go **Open**.
+* **Open**: reject immediately with `ErrOpen` until `cooldown` passes → move to **HalfOpen**.
+* **HalfOpen**: allow **one** call at a time. Success → **Closed** (reset). Failure → **Open** again.
+
+**Starter**
+
+```go
+package breaker
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"time"
+)
+
+var ErrOpen = errors.New("circuit open")
+
+type Breaker struct {
+	mu        sync.Mutex
+	state     state
+	failures  int
+	threshold int
+	cooldown  time.Duration
+	nextTry   time.Time
+	halfBusy  bool // allow only one probe in HalfOpen
+}
+
+type state uint8
+const (
+	closed state = iota
+	open
+	half
+)
+
+func New(threshold int, cooldown time.Duration) *Breaker {
+	return &Breaker{state: closed, threshold: threshold, cooldown: cooldown}
+}
+
+func (b *Breaker) Do(ctx context.Context, fn func(context.Context) error) error {
+	// fast path: decide state
+	b.mu.Lock()
+	switch b.state {
+	case open:
+		if time.Now().Before(b.nextTry) { b.mu.Unlock(); return ErrOpen }
+		// move to half-open gate
+		b.state = half
+		b.halfBusy = false
+	case half:
+		if b.halfBusy { b.mu.Unlock(); return ErrOpen }
+	default: // closed
+	}
+	b.mu.Unlock()
+
+	// execute guarded call
+	err := fn(ctx)
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	switch b.state {
+	case closed:
+		if err != nil {
+			b.failures++
+			if b.failures >= b.threshold {
+				b.state = open
+				b.nextTry = time.Now().Add(b.cooldown)
+			}
+		} else {
+			if b.failures > 0 { b.failures = 0 }
+		}
+	case half:
+		// mark probe slot occupied during this attempt
+		b.halfBusy = true
+		if err != nil {
+			b.state = open
+			b.nextTry = time.Now().Add(b.cooldown)
+			b.halfBusy = false
+		} else {
+			b.state = closed
+			b.failures = 0
+			b.halfBusy = false
+		}
+	}
+	return err
+}
+```
+
+---
+
+# 14C — SingleFlight (dedupe concurrent calls for same key)
+
+**Goal:** If many goroutines request the same resource (same key), do the work **once**, share the result (or error) with all waiters.
+
+**Pattern**
+
+* Map `key → call{done chan, val, err, waiters}`.
+* First goroutine creates the entry and does the work.
+* Others wait on `done`.
+* On completion, broadcast result, delete entry.
+
+**Starter**
+
+```go
+package sflight
+
+import (
+	"context"
+	"sync"
+)
+
+type call struct {
+	wg  sync.WaitGroup
+	val any
+	err error
+}
+
+type Group struct {
+	mu sync.Mutex
+	m  map[string]*call
+}
+
+func New() *Group { return &Group{m: make(map[string]*call)} }
+
+// Do ensures fn for key runs at most once concurrently.
+// All concurrent callers get the same (val, err).
+func (g *Group) Do(ctx context.Context, key string, fn func(context.Context) (any, error)) (any, error) {
+	g.mu.Lock()
+	if c := g.m[key]; c != nil {
+		// existing in-flight: wait
+		g.mu.Unlock()
+		c.wg.Wait()
+		return c.val, c.err
+	}
+	c := &call{}
+	c.wg.Add(1)
+	g.m[key] = c
+	g.mu.Unlock()
+
+	// leader
+	val, err := fn(ctx)
+	c.val, c.err = val, err
+	c.wg.Done()
+
+	// cleanup
+	g.mu.Lock()
+	delete(g.m, key)
+	g.mu.Unlock()
+	return val, err
+}
+```
+
+---
+
+## How to practice quickly
+
+* For **A**, wire a tiny demo: a producer that sends 1..N `In{Raw: "42"}`; transform parses ints (sleep 5–20ms), sink appends to a slice protected by a mutex. Add a context timeout to see cancellation propagate.
+* For **B**, wrap a flaky HTTP call; set `threshold=3`, `cooldown=2s`; hammer it in a loop and print states.
+* For **C**, spawn 50 goroutines calling `Do(ctx, "user:123", fetchUser)` and confirm `fetchUser` ran once.
+
+got you — here are polished, production-ready solutions for all three (with tiny demos).
+
+---
+
+## 14A) Context-propagated pipeline with bounded backpressure (`errgroup`)
+
+```go
+package pipeline
+
+import (
+	"context"
+	"golang.org/x/sync/errgroup"
+)
+
+type In struct{ Raw string }
+type Out struct{ Val int }
+
+type Transformer func(context.Context, In) (Out, error)
+type Sink func(context.Context, Out) error
+
+// Run: src -> transform (workers) -> sink; bounded buffers; stop on first error/cancel.
+func Run(ctx context.Context, src <-chan In, workers, buf int, transform Transformer, sink Sink) error {
+	if workers <= 0 {
+		workers = 1
+	}
+	if buf <= 0 {
+		buf = workers * 2
+	}
+
+	g, ctx := errgroup.WithContext(ctx)
+	mid := make(chan Out, buf)
+
+	// Stage 2: M workers transform In -> Out
+	g.Go(func() error {
+		defer close(mid)
+		wg, _ := errgroup.WithContext(ctx)
+		for i := 0; i < workers; i++ {
+			wg.Go(func() error {
+				for {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case x, ok := <-src:
+						if !ok {
+							return nil
+						}
+						y, err := transform(ctx, x)
+						if err != nil {
+							return err
+						}
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						case mid <- y:
+						}
+					}
+				}
+			})
+		}
+		return wg.Wait()
+	})
+
+	// Stage 3: sink (serial; make N sinks if safe)
+	g.Go(func() error {
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case y, ok := <-mid:
+				if !ok {
+					return nil
+				}
+				if err := sink(ctx, y); err != nil {
+					return err
+				}
+			}
+		}
+	})
+
+	return g.Wait()
+}
+```
+
+### Tiny demo
+
+```go
+// func demo() error {
+//   ctx, cancel := context.WithCancel(context.Background())
+//   defer cancel()
+//   src := make(chan pipeline.In, 8)
+//   go func(){ defer close(src); for i:=0;i<100;i++{ src<-pipeline.In{Raw: fmt.Sprint(i)} } }()
+//   transform := func(ctx context.Context, in pipeline.In) (pipeline.Out, error){ v,_:=strconv.Atoi(in.Raw); return pipeline.Out{Val:v*v}, nil }
+//   var mu sync.Mutex; out := []int{}
+//   sink := func(ctx context.Context, o pipeline.Out) error { mu.Lock(); out = append(out, o.Val); mu.Unlock(); return nil }
+//   return pipeline.Run(ctx, src, 8, 32, transform, sink)
+// }
+```
+
+---
+
+## 14B) Circuit Breaker (closed → open → half-open; single probe in half-open)
+
+```go
+package breaker
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"time"
+)
+
+var ErrOpen = errors.New("circuit open")
+
+type state uint8
+
+const (
+	closed state = iota
+	open
+	half
+)
+
+type Breaker struct {
+	mu        sync.Mutex
+	state     state
+	failures  int
+	threshold int
+	cooldown  time.Duration
+	nextTry   time.Time
+	// half-open gate
+	probeInFlight bool
+}
+
+func New(threshold int, cooldown time.Duration) *Breaker {
+	return &Breaker{state: closed, threshold: threshold, cooldown: cooldown}
+}
+
+func (b *Breaker) Do(ctx context.Context, fn func(context.Context) error) error {
+	// enter / decide
+	b.mu.Lock()
+	switch b.state {
+	case open:
+		if time.Now().Before(b.nextTry) {
+			b.mu.Unlock()
+			return ErrOpen
+		}
+		// move to half-open
+		b.state = half
+		b.probeInFlight = false
+		fallthrough
+	case half:
+		if b.probeInFlight {
+			b.mu.Unlock()
+			return ErrOpen
+		}
+		b.probeInFlight = true
+	case closed:
+		// pass
+	}
+	b.mu.Unlock()
+
+	// guarded call
+	err := fn(ctx)
+
+	// exit / transition
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	switch b.state {
+	case closed:
+		if err != nil {
+			b.failures++
+			if b.failures >= b.threshold {
+				b.state = open
+				b.nextTry = time.Now().Add(b.cooldown)
+			}
+		} else if b.failures != 0 {
+			b.failures = 0
+		}
+	case half:
+		// release probe slot
+		defer func() { b.probeInFlight = false }()
+		if err != nil {
+			b.state = open
+			b.nextTry = time.Now().Add(b.cooldown)
+		} else {
+			b.state = closed
+			b.failures = 0
+		}
+	}
+	return err
+}
+
+// State exposes current state (for metrics/tests).
+func (b *Breaker) State() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	switch b.state {
+	case closed:
+		return "closed"
+	case open:
+		return "open"
+	default:
+		return "half-open"
+	}
+}
+```
+
+### Tiny demo
+
+```go
+// br := breaker.New(3, 2*time.Second)
+// for i:=0;i<10;i++ {
+//   err := br.Do(ctx, flakyCall)
+//   fmt.Println(i, br.State(), err)
+//   time.Sleep(200*time.Millisecond)
+// }
+```
+
+---
+
+## 14C) SingleFlight with context-aware waiting (dedup by key)
+
+```go
+package sflight
+
+import (
+	"context"
+	"sync"
+)
+
+type call struct {
+	done chan struct{}
+	val  any
+	err  error
+}
+
+type Group struct {
+	mu sync.Mutex
+	m  map[string]*call
+}
+
+func New() *Group { return &Group{m: make(map[string]*call)} }
+
+// Do runs fn at most once concurrently for a key.
+// Waiters respect ctx (can stop waiting early), but the in-flight fn continues.
+func (g *Group) Do(ctx context.Context, key string, fn func(context.Context) (any, error)) (any, error) {
+	g.mu.Lock()
+	if c := g.m[key]; c != nil {
+		done := c.done
+		g.mu.Unlock()
+		select {
+		case <-done:
+			return c.val, c.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	c := &call{done: make(chan struct{})}
+	g.m[key] = c
+	g.mu.Unlock()
+
+	// leader executes
+	val, err := fn(ctx)
+	c.val, c.err = val, err
+	close(c.done)
+
+	// cleanup
+	g.mu.Lock()
+	delete(g.m, key)
+	g.mu.Unlock()
+
+	return val, err
+}
+```
+
+### Tiny demo
+
+```go
+// g := sflight.New()
+// fetch := func(ctx context.Context)(any,error){ time.Sleep(200*time.Millisecond); return "DATA", nil }
+// var wg sync.WaitGroup
+// for i:=0;i<50;i++ { wg.Add(1); go func(){ defer wg.Done(); v, _ := g.Do(context.Background(), "user:42", fetch); _ = v }() }
+// wg.Wait()
+```
+
+---
+Alright — **Step 15: Mock interview (one-by-one)**.
+We’ll do 3 problems total (concurrency + systems + DS). We’ll go strictly **one at a time**. Here’s **Problem 1**.
+
+---
+
+## Problem 1 — Concurrency: bounded worker pool with retries & backpressure (Go)
+
+### Task
+
+Implement a function that fetches many URLs concurrently with:
+
+* **Max concurrency** = `workers`
+* **Per-request deadline** = `timeout`
+* **Retries** = up to `retries` times for transient errors (network error or HTTP 5xx/429)
+* **Backpressure**: do not buffer unboundedly; inputs flow through a bounded channel
+* **Context-aware**: stop early on `ctx` cancel; return partial results collected so far
+
+### Signature
+
+```go
+// FetchAll fetches each URL and returns its final HTTP status code (or 0 if all retries fail).
+// On context cancel, stop launching new work and return whatever is finished.
+func FetchAll(ctx context.Context, urls []string, workers int, retries int, timeout time.Duration) map[string]int
+```
+
+### Notes / Constraints
+
+* Use **one** shared `http.Client` with sane Transport timeouts (don’t create per request).
+* A “transient” response = **status 5xx or 429**; a network error is also transient.
+* Each attempt must respect `timeout` via **per-request context** (`context.WithTimeout`).
+* Implement **exponential backoff** between retries: `100ms, 200ms, 400ms, ...` (cancel-aware).
+* Return a `map[url]statusCode`. If all attempts fail, store `0`.
+* Avoid data races; the map must be safely written.
+
+### Example
+
+* `urls = ["https://httpbin.org/status/200","https://httpbin.org/status/503"]`
+* With `retries=2`, the 503 may still end up as 503 or 0 depending on transient behavior; your logic should retry it with backoff.
+
+### What I’ll look for
+
+* Clean pipeline: producer → bounded queue → worker goroutines → collector.
+* Correct context handling (no goroutine leaks).
+* Proper retry decision & backoff.
+* Minimal allocations / no shared-data races.
+
+---
+
+Here’s a clean, production-style implementation of `FetchAll` with bounded workers, per-request deadlines, retries with exponential backoff, and full context propagation:
+
+```go
+package fetchpool
+
+import (
+	"context"
+	"io"
+	"net"
+	"net/http"
+	"sync"
+	"time"
+)
+
+// FetchAll fetches each URL and returns its final HTTP status code (or 0 if all retries fail).
+// Concurrency is limited by 'workers'. Each attempt is bounded by 'timeout'.
+// Retries occur on network errors or transient statuses (5xx/429) with exponential backoff.
+func FetchAll(ctx context.Context, urls []string, workers int, retries int, timeout time.Duration) map[string]int {
+	if workers <= 0 {
+		workers = 1
+	}
+	if retries < 0 {
+		retries = 0
+	}
+	// Shared HTTP client with sane Transport timeouts & pooling.
+	client := &http.Client{
+		Timeout: timeout, // hard cap per attempt (request+redirects)
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   5 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout:   5 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			MaxIdleConns:          200,
+			MaxIdleConnsPerHost:   100,
+			IdleConnTimeout:       90 * time.Second,
+		},
+	}
+
+	// Pre-fill results with 0 (so partial results on early cancel are well-defined).
+	results := make(map[string]int, len(urls))
+	for _, u := range urls {
+		results[u] = 0
+	}
+	var mu sync.Mutex
+
+	type job struct{ url string }
+	jobs := make(chan job, workers*2) // bounded buffer => backpressure
+
+	// Worker pool
+	var wg sync.WaitGroup
+	worker := func() {
+		defer wg.Done()
+		for j := range jobs {
+			code := fetchWithRetry(ctx, client, j.url, retries, timeout)
+			// store result (0 if failed/exhausted)
+			mu.Lock()
+			results[j.url] = code
+			mu.Unlock()
+		}
+	}
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go worker()
+	}
+
+	// Producer: enqueue jobs unless ctx is canceled.
+enqueue:
+	for _, u := range urls {
+		select {
+		case <-ctx.Done():
+			break enqueue
+		case jobs <- job{url: u}:
+		}
+	}
+	close(jobs)
+
+	// Wait for workers to drain whatever was enqueued.
+	wg.Wait()
+	return results
+}
+
+func fetchWithRetry(ctx context.Context, client *http.Client, url string, retries int, timeout time.Duration) int {
+	// Backoff: 100ms, 200ms, 400ms, ...
+	backoff := 100 * time.Millisecond
+	attempts := retries + 1
+
+	for i := 0; i < attempts; i++ {
+		// Per-attempt context deadline (also inherits parent cancel).
+		reqCtx, cancel := context.WithTimeout(ctx, timeout)
+		req, _ := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+
+		code, err := doOnce(client, req)
+		cancel() // ensure timers/resources are freed
+
+		if err == nil && !isTransient(code, nil) {
+			return code // success or non-retriable status
+		}
+		// If parent context is done, stop immediately (partial results remain 0).
+		select {
+		case <-ctx.Done():
+			return 0
+		default:
+		}
+		// Retry only if transient and attempts remain.
+		if i < attempts-1 && isTransient(code, err) {
+			if !sleepCtx(ctx, backoff) {
+				return 0
+			}
+			backoff <<= 1
+			continue
+		}
+		// No more retries or not transient.
+		if err == nil {
+			return code
+		}
+		return 0
+	}
+	return 0
+}
+
+func doOnce(client *http.Client, req *http.Request) (int, error) {
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err // network/transport error (transient)
+	}
+	defer resp.Body.Close()
+	// Drain a small amount so the connection can be reused quickly.
+	_, _ = io.CopyN(io.Discard, resp.Body, 1024)
+	return resp.StatusCode, nil
+}
+
+func isTransient(status int, err error) bool {
+	if err != nil {
+		return true // network/transport error
+	}
+	// 5xx or Too Many Requests
+	return status == http.StatusTooManyRequests || (status >= 500 && status <= 599)
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+```
+
+### Notes
+
+* **Backpressure:** bounded `jobs` channel (`workers*2`) ensures producers don’t outrun workers.
+* **Safety:** results map guarded by a mutex; prefilled with `0` so partial results are defined.
+* **Retries:** only on *transient* conditions (network error, 5xx, 429), with exponential backoff that honors `ctx`.
+* **Per-attempt timeout:** both via `http.Client.Timeout` and a per-attempt `WithTimeout`.
+* **Connection reuse:** small body drain before closing.
+
+Great — **Problem 2 (Systems)** 👇
+
+## Idempotency-Key middleware for POST requests (Go, net/http)
+
+### Task
+
+Implement an HTTP middleware that enforces **idempotency** for `POST` requests using the header `Idempotency-Key`. If multiple identical-key requests arrive:
+
+* The **first** request is processed by the wrapped handler.
+* **Concurrent** requests with the same key **wait** and receive the **same status/body/headers**.
+* **Subsequent** requests within a **TTL window** receive the cached response immediately.
+* After TTL expiry, a new request with the same key executes again.
+
+### Requirements
+
+* Only apply to **POST** requests with **non-empty** `Idempotency-Key` header; otherwise, just pass through.
+* **Store**: in-memory, bounded by **TTL** and **max entries** (evict oldest when over capacity).
+* **Concurrency-safe**: ensure only one in-flight handler run per key; others wait (no duplicate work).
+* **Context-aware**: if the original request context is canceled, waiting callers should **still** return the cached outcome once done (unless the leader failed before producing a result).
+* Cache the **status code**, **headers** (at least `Content-Type`), and **body** (limit to e.g. 1MB; if larger, do not cache).
+* Expose a small counter for: `hits`, `misses`, `waiters`, `evictions` (you can keep them in-memory).
+
+### Signature
+
+```go
+// NewIdemMiddleware returns a middleware that enforces idempotency for POSTs.
+// ttl bounds the lifetime of a cached result; cap is max cached entries.
+func NewIdemMiddleware(ttl time.Duration, cap int) func(http.Handler) http.Handler
+```
+
+### Hints
+
+* Wrap the downstream handler with a custom `ResponseRecorder` to capture status/headers/body.
+* Use an internal entry: `{ done chan struct{}; status int; hdr http.Header; body []byte; err error; created time.Time }`.
+* Use a **map + list** for simple LRU, or keep it simple: map + FIFO eviction is acceptable here.
+* Protect the map with a mutex; use a per-key entry with a `done` channel (singleflight pattern).
+* Respect body-size limit when deciding to cache.
+
+---
+
+Here’s a complete, drop-in **Idempotency-Key middleware** with TTL + bounded cache, singleflight for concurrent requests, and a 1 MB body cache cap.
+
+```go
+package idem
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"log"
+	"net/http"
+	"sync"
+	"time"
+)
+
+const maxCacheBody = 1 << 20 // 1 MiB
+
+// NewIdemMiddleware returns a middleware that enforces idempotency for POSTs.
+// - Uses Idempotency-Key header
+// - Singleflight for concurrent same-key requests (waiters get the same response)
+// - Caches (status/headers/body) for TTL; evicts when cap is exceeded (FIFO)
+// - Bodies > 1MB are NOT cached after completion (but concurrent waiters still get the full response)
+func NewIdemMiddleware(ttl time.Duration, cap int) func(http.Handler) http.Handler {
+	if cap <= 0 {
+		cap = 1024
+	}
+	m := &manager{
+		ttl:     ttl,
+		cap:     cap,
+		entries: make(map[string]*entry, cap),
+		order:   make([]string, 0, cap),
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Only enforce on POST with non-empty Idempotency-Key
+			if r.Method != http.MethodPost {
+				next.ServeHTTP(w, r)
+				return
+			}
+			key := r.Header.Get("Idempotency-Key")
+			if key == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			now := time.Now()
+
+			// Fast path: check cache / in-flight
+			e, state := m.getOrCreate(key, now)
+			switch state {
+			case hitReady:
+				// Serve cached response immediately
+				e.writeTo(w)
+				m.bumpHit()
+				return
+			case hitInflight:
+				// Another request is already processing this key — wait for it to finish
+				<-e.done // NOTE: we intentionally ignore r.Context cancellation here to satisfy: waiters still return the cached outcome once done
+				if e.err != nil {
+					// If the leader errored before producing a response, propagate 500
+					http.Error(w, "idempotency leader failed", http.StatusInternalServerError)
+					return
+				}
+				e.writeTo(w)
+				m.bumpWaiter()
+				return
+			case missLeader:
+				// This request is the leader; run downstream and capture response.
+				rec := newRecorder(w)
+				next.ServeHTTP(rec, r.WithContext(withLeader(r.Context()))) // pass-through, recording status/headers/body
+
+				// Finalize entry
+				e.status = rec.status()
+				e.hdr = cloneHeader(rec.Header())
+				e.body = rec.body.Bytes()
+				e.created = now
+				// Cache only if body is within cap
+				if len(e.body) > maxCacheBody {
+					// too large to cache — remove entry from map so no future replay;
+					// BUT concurrent waiters (already waiting on done) still got the full body via e.body below.
+					e.tooLarge = true
+					m.delete(key)
+				}
+				close(e.done)
+				return
+			default:
+				// Should not happen
+				next.ServeHTTP(w, r)
+				return
+			}
+		})
+	}
+}
+
+/* ---------- internals ---------- */
+
+type entry struct {
+	done    chan struct{}
+	status  int
+	hdr     http.Header
+	body    []byte
+	err     error
+	created time.Time
+	tooLarge bool
+}
+
+func (e *entry) writeTo(w http.ResponseWriter) {
+	// Write headers (at least Content-Type retained)
+	for k, vv := range e.hdr {
+		// avoid duplicating default headers set by the server; overwrite explicitly
+		w.Header().Del(k)
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	// Let net/http set Content-Length automatically
+	if e.status == 0 {
+		e.status = http.StatusOK
+	}
+	w.WriteHeader(e.status)
+	if len(e.body) > 0 {
+		_, _ = w.Write(e.body)
+	}
+}
+
+type hitState int
+
+const (
+	hitReady hitState = iota // cached & fresh
+	hitInflight              // in-flight; caller should wait for done
+	missLeader               // cache miss; caller becomes leader and must execute handler
+)
+
+type manager struct {
+	ttl     time.Duration
+	cap     int
+
+	mu      sync.Mutex
+	entries map[string]*entry
+	order   []string // FIFO for simple eviction
+	stats   struct {
+		hits, misses, waiters, evictions uint64
+	}
+}
+
+func (m *manager) bumpHit()    { /* keep simple; add atomics if you export */ m.stats.hits++ }
+func (m *manager) bumpMiss()   { m.stats.misses++ }
+func (m *manager) bumpWaiter() { m.stats.waiters++ }
+func (m *manager) bumpEvict()  { m.stats.evictions++ }
+
+func (m *manager) getOrCreate(key string, now time.Time) (*entry, hitState) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Opportunistic cleanup of expired entries (cheap: head-only)
+	if len(m.order) > 0 {
+		// remove oldest if expired
+		oldestKey := m.order[0]
+		if e := m.entries[oldestKey]; e != nil && m.isExpired(e, now) {
+			delete(m.entries, oldestKey)
+			m.order = m.order[1:]
+		}
+	}
+
+	if e, ok := m.entries[key]; ok {
+		// If in-flight, not yet closed => wait
+		select {
+		case <-e.done:
+			// done: check TTL
+			if m.isExpired(e, now) || e.tooLarge {
+				// remove stale and treat as miss
+				delete(m.entries, key)
+				m.removeFromOrder(key)
+				break
+			}
+			return e, hitReady
+		default:
+			return e, hitInflight
+		}
+	}
+
+	// MISS: create a new entry for leader
+	m.bumpMiss()
+	e := &entry{
+		done:    make(chan struct{}),
+		created: now,
+	}
+	m.entries[key] = e
+	m.order = append(m.order, key)
+	// Evict if over capacity (simple FIFO)
+	if len(m.entries) > m.cap {
+		ek := m.order[0]
+		if ek == key && len(m.order) > 1 {
+			ek = m.order[1] // avoid evicting ourselves if just inserted at head (rare)
+		}
+		if ev := m.entries[ek]; ev != nil {
+			delete(m.entries, ek)
+			m.removeFromOrder(ek)
+			m.bumpEvict()
+		}
+	}
+	return e, missLeader
+}
+
+func (m *manager) delete(key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.entries[key]; ok {
+		delete(m.entries, key)
+		m.removeFromOrder(key)
+	}
+}
+
+func (m *manager) isExpired(e *entry, now time.Time) bool {
+	if m.ttl <= 0 {
+		return false
+	}
+	return now.Sub(e.created) > m.ttl
+}
+
+func (m *manager) removeFromOrder(key string) {
+	for i, k := range m.order {
+		if k == key {
+			m.order = append(m.order[:i], m.order[i+1:]...)
+			return
+		}
+	}
+}
+
+// response recorder that mirrors writes to the real ResponseWriter and buffers the body
+type recorder struct {
+	w      http.ResponseWriter
+	body   *bytes.Buffer
+	wroteH bool
+	code   int
+}
+
+func newRecorder(w http.ResponseWriter) *recorder {
+	return &recorder{
+		w:    w,
+		body: &bytes.Buffer{},
+		code: http.StatusOK,
+	}
+}
+
+func (r *recorder) Header() http.Header { return r.w.Header() }
+
+func (r *recorder) WriteHeader(statusCode int) {
+	if !r.wroteH {
+		r.code = statusCode
+		r.w.WriteHeader(statusCode)
+		r.wroteH = true
+	}
+}
+
+func (r *recorder) Write(b []byte) (int, error) {
+	// Mirror to client
+	n, err := r.w.Write(b)
+	// Buffer fully (unbounded for correctness w.r.t concurrent waiters)
+	// We'll decide AFTER completion whether to keep it in cache.
+	if n > 0 {
+		if _, berr := r.body.Write(b[:n]); berr != nil {
+			// extremely unlikely; if it happens, just log and move on
+			log.Printf("idem: buffer write err: %v", berr)
+		}
+	}
+	return n, err
+}
+
+func (r *recorder) status() int {
+	if !r.wroteH {
+		return http.StatusOK
+	}
+	return r.code
+}
+
+func cloneHeader(h http.Header) http.Header {
+	dst := make(http.Header, len(h))
+	for k, vv := range h {
+		cp := make([]string, len(vv))
+		copy(cp, vv)
+		dst[k] = cp
+	}
+	return dst
+}
+
+/* Optional: context marker for leaders if you want observability hooks */
+type ctxKey struct{}
+var leaderKey ctxKey
+
+func withLeader(ctx context.Context) context.Context { return context.WithValue(ctx, leaderKey, true) }
+func IsLeader(ctx context.Context) bool {
+	v := ctx.Value(leaderKey)
+	b, _ := v.(bool)
+	return b
+}
+```
+
+### Behavior highlights
+
+* **Concurrent same-key POSTs:** first one becomes **leader**; others **wait** on `entry.done` and then receive the exact same status/headers/body.
+* **TTL cache:** after leader completes, result is cached up to `ttl`; subsequent calls with same key within TTL are instant **hits**.
+* **Body size cap:** we **always buffer fully** for correctness for concurrent waiters. After completion, if `len(body) > 1MiB`, we **do not keep** the entry in the cache—future requests won’t be replayed, but waiters of that in-flight request still got the full response.
+* **Eviction:** simple FIFO when `cap` exceeded. (Good enough for interview; easy to swap to LRU later.)
+* **Context:** waiters intentionally **ignore** their own context cancellation while waiting, to satisfy the requirement “waiters should still return the cached outcome once done.” If the leader fails before producing a result, we return `500`.
+
+If you want, I can also provide a tiny `httptest` demo showing:
+
+* two concurrent `POST`s with the same idempotency key coalescing into one,
+* a third POST within TTL being a fast cache hit,
+* a large (>1 MB) response skipping the cache but still serving waiters correctly.
+
+**Problem 3 (DS) — LRU Cache (O(1) get/put)**
+
+### Task
+
+Implement an in-memory **Least Recently Used (LRU) cache** with:
+
+* `Get(key) (value, ok)` in **O(1)**
+* `Put(key, value)` in **O(1)**
+* **Capacity** `cap` (number of entries). When full, **evict least-recently-used**.
+* A `Peek(key)` that returns value **without** updating recency.
+* A `Delete(key)` that removes a key if present.
+* Optional: `Len()` and `Keys()` (most-recent → least-recent).
+
+> Thread-safety **not required** for the base task. If you want, do a `SafeLRU` wrapper with a mutex as a bonus.
+
+### Signature
+
+```go
+type LRU[K comparable, V any] struct { /* ... */ }
+
+func NewLRU[K comparable, V any](cap int) *LRU[K,V]
+func (c *LRU[K,V]) Get(k K) (V, bool)
+func (c *LRU[K,V]) Put(k K, v V)
+func (c *LRU[K,V]) Peek(k K) (V, bool)
+func (c *LRU[K,V]) Delete(k K)
+func (c *LRU[K,V]) Len() int
+func (c *LRU[K,V]) Keys() []K // MRU → LRU
+```
+
+### Constraints / Hints
+
+* Use a **hash map** `key → *node` + **doubly linked list** to track recency (head=MRU, tail=LRU).
+* On `Get`, move node to **head**.
+* On `Put`:
+
+  * If key exists: update value + move to **head**.
+  * Else: insert a new node at **head**; if size exceeds capacity, **evict tail**.
+* Avoid extra allocations in `Keys()` if you can pre-size the slice.
+
+### Example
+
+```go
+c := NewLRU
+c.Put("a",1)        // [a]
+c.Put("b",2)        // [b,a]
+c.Get("a")          // 1 → [a,b]
+c.Put("c",3)        // evict "b" → [c,a]
+c.Peek("a")         // 1 (order stays [c,a])
+c.Delete("a")       // [c]
+```
+
+---
+
+Here’s a clean, generic LRU cache with O(1) get/put, plus `Peek`, `Delete`, `Len`, `Keys` (MRU → LRU). I’ve also added an optional `SafeLRU` wrapper for goroutine-safe use, and tiny unit tests.
+
+---
+
+### `lru/lru.go`
+
+```go
+package lru
+
+// Generic LRU cache (not thread-safe). Use SafeLRU for concurrency.
+
+type node[K comparable, V any] struct {
+	k    K
+	v    V
+	prev *node[K, V]
+	next *node[K, V]
+}
+
+type LRU[K comparable, V any] struct {
+	cap   int
+	size  int
+	index map[K]*node[K, V]
+	head  *node[K, V] // MRU
+	tail  *node[K, V] // LRU
+}
+
+// NewLRU creates an LRU with the given positive capacity.
+// If cap <= 0, it panics (adjust to your preference).
+func NewLRU[K comparable, V any](cap int) *LRU[K, V] {
+	if cap <= 0 {
+		panic("lru: capacity must be > 0")
+	}
+	return &LRU[K, V]{
+		cap:   cap,
+		index: make(map[K]*node[K, V], cap),
+	}
+}
+
+func (c *LRU[K, V]) Len() int { return c.size }
+
+// Get returns value and true if present; it updates recency (moves to MRU).
+func (c *LRU[K, V]) Get(k K) (V, bool) {
+	var zero V
+	n, ok := c.index[k]
+	if !ok {
+		return zero, false
+	}
+	c.moveToHead(n)
+	return n.v, true
+}
+
+// Peek returns value and true if present; it does NOT update recency.
+func (c *LRU[K, V]) Peek(k K) (V, bool) {
+	var zero V
+	n, ok := c.index[k]
+	if !ok {
+		return zero, false
+	}
+	return n.v, true
+}
+
+// Put inserts or updates and moves the key to MRU.
+// If capacity is exceeded, evicts the LRU entry.
+func (c *LRU[K, V]) Put(k K, v V) {
+	if n, ok := c.index[k]; ok {
+		n.v = v
+		c.moveToHead(n)
+		return
+	}
+	n := &node[K, V]{k: k, v: v}
+	c.index[k] = n
+	c.addToHead(n)
+	c.size++
+	if c.size > c.cap {
+		c.evictTail()
+	}
+}
+
+// Delete removes the key if present.
+func (c *LRU[K, V]) Delete(k K) {
+	n, ok := c.index[k]
+	if !ok {
+		return
+	}
+	c.unlink(n)
+	delete(c.index, k)
+	c.size--
+}
+
+// Keys returns keys from MRU → LRU.
+func (c *LRU[K, V]) Keys() []K {
+	out := make([]K, 0, c.size)
+	for n := c.head; n != nil; n = n.next {
+		out = append(out, n.k)
+	}
+	return out
+}
+
+/* ---- internal list ops ---- */
+
+func (c *LRU[K, V]) addToHead(n *node[K, V]) {
+	n.prev = nil
+	n.next = c.head
+	if c.head != nil {
+		c.head.prev = n
+	}
+	c.head = n
+	if c.tail == nil {
+		c.tail = n
+	}
+}
+
+func (c *LRU[K, V]) moveToHead(n *node[K, V]) {
+	if c.head == n {
+		return
+	}
+	c.unlink(n)
+	c.addToHead(n)
+}
+
+func (c *LRU[K, V]) unlink(n *node[K, V]) {
+	if n.prev != nil {
+		n.prev.next = n.next
+	} else {
+		c.head = n.next
+	}
+	if n.next != nil {
+		n.next.prev = n.prev
+	} else {
+		c.tail = n.prev
+	}
+	n.prev, n.next = nil, nil
+}
+
+func (c *LRU[K, V]) evictTail() {
+	if c.tail == nil {
+		return
+	}
+	ev := c.tail
+	c.unlink(ev)
+	delete(c.index, ev.k)
+	c.size--
+}
+```
+
+---
+
+### (Optional) `lru/safelru.go` — goroutine-safe wrapper
+
+```go
+package lru
+
+import "sync"
+
+// SafeLRU wraps LRU with a RWMutex for concurrent use.
+type SafeLRU[K comparable, V any] struct {
+	mu  sync.RWMutex
+	inn *LRU[K, V]
+}
+
+func NewSafeLRU[K comparable, V any](cap int) *SafeLRU[K, V] {
+	return &SafeLRU[K, V]{inn: NewLRU[K, V](cap)}
+}
+
+func (s *SafeLRU[K, V]) Len() int {
+	s.mu.RLock(); defer s.mu.RUnlock()
+	return s.inn.Len()
+}
+func (s *SafeLRU[K, V]) Get(k K) (V, bool) {
+	s.mu.Lock(); defer s.mu.Unlock() // Get mutates recency
+	return s.inn.Get(k)
+}
+func (s *SafeLRU[K, V]) Peek(k K) (V, bool) {
+	s.mu.RLock(); defer s.mu.RUnlock()
+	return s.inn.Peek(k)
+}
+func (s *SafeLRU[K, V]) Put(k K, v V) {
+	s.mu.Lock(); defer s.mu.Unlock()
+	s.inn.Put(k, v)
+}
+func (s *SafeLRU[K, V]) Delete(k K) {
+	s.mu.Lock(); defer s.mu.Unlock()
+	s.inn.Delete(k)
+}
+func (s *SafeLRU[K, V]) Keys() []K {
+	s.mu.RLock(); defer s.mu.RUnlock()
+	// return a copy to avoid data races for callers iterating
+	ks := s.inn.Keys()
+	out := make([]K, len(ks))
+	copy(out, ks)
+	return out
+}
+```
+
+---
+
+### `lru/lru_test.go` (tiny unit tests)
+
+```go
+package lru
+
+import "testing"
+
+func TestLRUBasic(t *testing.T) {
+	c := NewLRU
+	c.Put("a", 1)               // [a]
+	c.Put("b", 2)               // [b,a]
+	if v, ok := c.Get("a"); !ok || v != 1 { t.Fatalf("get a = %v,%v", v, ok) } // [a,b]
+	c.Put("c", 3)               // evict b -> [c,a]
+	if _, ok := c.Peek("b"); ok { t.Fatalf("b should be evicted") }
+	if v, ok := c.Peek("a"); !ok || v != 1 { t.Fatalf("peek a = %v,%v", v, ok) }
+	keys := c.Keys()
+	want := []string{"c", "a"}
+	if len(keys) != len(want) || keys[0] != want[0] || keys[1] != want[1] {
+		t.Fatalf("keys = %v want %v", keys, want)
+	}
+	c.Delete("a")               // [c]
+	if c.Len() != 1 { t.Fatalf("len = %d", c.Len()) }
+}
+
+func TestUpdateMovesToMRU(t *testing.T) {
+	c := NewLRU
+	c.Put("x", 10)              // [x]
+	c.Put("y", 20)              // [y,x]
+	c.Put("x", 15)              // update & move: [x,y]
+	keys := c.Keys()
+	if keys[0] != "x" || keys[1] != "y" {
+		t.Fatalf("order wrong: %v", keys)
+	}
+	if v, ok := c.Get("y"); !ok || v != 20 { t.Fatalf("get y = %v,%v", v, ok) } // [y,x]
+	c.Put("z", 30)              // evict x -> [z,y]
+	if _, ok := c.Peek("x"); ok { t.Fatalf("x should be evicted") }
+}
+```
+
+---
+
+### Usage example
+
+```go
+c := lru.NewLRU
+c.Put("a", 1)        // [a]
+c.Put("b", 2)        // [b,a]
+c.Get("a")           // => 1; order [a,b]
+c.Put("c", 3)        // evicts "b" -> [c,a]
+v, ok := c.Peek("a") // 1, true (order unchanged)
+c.Delete("a")        // [c]
+```
+
+awesome — **Step 16: Go internals & pitfalls** (memory model, slices, maps, interfaces, generics). We’ll go one-by-one. Here’s **Problem 1**.
+
+---
+
+## Problem 1 — Slice aliasing & hidden mutations
+
+### Task
+
+The function is supposed to return a sorted copy of `in` and leave `in` unchanged. It sometimes corrupts `in` depending on capacity. Fix it so:
+
+* `in` is never mutated,
+* returned slice is sorted ascending,
+* no unnecessary allocations when `len(in)` is small.
+
+```go
+package pit
+
+import "slices"
+
+func SortedCopy(in []int) []int {
+	// BUGGY: sometimes mutates `in`
+	out := in[:len(in)] // intention: copy
+	slices.Sort(out)
+	return out
+}
+```
+
+### Notes
+
+* Watch for **aliasing** (`out` sharing backing array with `in`).
+* Aim for O(n) copy once, then sort in place.
+* Prefer standard library helpers where appropriate.
+
+---
+
+Here’s the safe, allocation-minimal fix:
+
+```go
+package pit
+
+import "slices"
+
+// SortedCopy returns a sorted copy of in without mutating in.
+func SortedCopy(in []int) []int {
+	out := slices.Clone(in) // copies exactly len(in); no aliasing
+	slices.Sort(out)        // in-place sort on the copy
+	return out
+}
+```
+
+If you’re on an older Go without `slices.Clone`, use:
+
+```go
+out := append([]int(nil), in...) // copies once, exact length
+slices.Sort(out)
+```
+great — **Step 16 · Problem 2: maps, zero values & concurrent reads**
+
+### Task
+
+You have a read-mostly configuration map that is occasionally updated. The current code panics under load with “concurrent map read and map write”. Fix it so:
+
+* multiple goroutines can read safely,
+* occasional updates don’t race,
+* reads are **lock-free** fast path when no update is happening (or as close as we can get),
+* callers see a **consistent snapshot** (no partial writes).
+
+Buggy version:
+
+```go
+package pit
+
+var cfg = map[string]string{}
+
+func Get(key string) (string, bool) {
+	v, ok := cfg[key]     // ← races with Set
+	return v, ok
+}
+
+func Set(key, val string) {
+	cfg[key] = val        // ← races with Get
+}
+```
+
+### Requirements
+
+* Keep the API: `Get` and `Set` (no extra args).
+* Prefer **copy-on-write** with `atomic.Value` (or a `sync.RWMutex` fallback if you must, but aim for lock-free reads).
+* `Set` may be called concurrently by multiple writers; ensure correctness.
+
+---
+
+Here’s a lock-free read, copy-on-write write solution using `atomic.Value` + a small write mutex to avoid lost updates between concurrent writers:
+
+```go
+package pit
+
+import (
+	"sync"
+	"sync/atomic"
+)
+
+// cfg always holds an immutable snapshot: map[string]string
+var cfg atomic.Value
+
+// serialize writers to avoid lost updates when multiple Set calls race
+var wmu sync.Mutex
+
+func init() {
+	cfg.Store(make(map[string]string)) // empty snapshot
+}
+
+// Get is lock-free: load the current snapshot and read.
+func Get(key string) (string, bool) {
+	m := cfg.Load().(map[string]string)
+	v, ok := m[key]
+	return v, ok
+}
+
+// Set performs copy-on-write: clone the current snapshot, modify, then publish.
+func Set(key, val string) {
+	wmu.Lock()
+	defer wmu.Unlock()
+
+	old := cfg.Load().(map[string]string)
+
+	// Clone (immutable snapshot pattern)
+	n := make(map[string]string, len(old)+1)
+	for k, v := range old {
+		n[k] = v
+	}
+	n[key] = val
+
+	// Publish the new snapshot atomically
+	cfg.Store(n)
+}
+```
+
+### Why this fixes the panic (and data races)
+
+* **Readers**: lock-free, race-free — they only read an immutable map snapshot loaded atomically.
+* **Writers**: copy-on-write makes each new snapshot independent; the **write mutex** ensures concurrent `Set` calls don’t overwrite each other’s changes (no lost updates).
+* **Consistency**: each `Get` sees a real snapshot (no partial writes).
+
+nice — **Step 16 · Problem 3: interfaces, typed nil, and error wrapping**
+
+### Task
+
+This code sometimes logs “nil error” even though something clearly failed. Fix it so:
+
+* `Do()` returns a *non-nil* `error` when the underlying pointer is nil,
+* `errors.Is/As` work correctly,
+* Logging never prints `<nil>` when there’s an actual failure,
+* Keep the public API the same.
+
+**Buggy code:**
+
+```go
+package pit
+
+import "fmt"
+
+type OpError struct {
+	Op  string
+	Err error
+}
+
+func (e *OpError) Error() string {
+	return fmt.Sprintf("%s: %v", e.Op, e.Err)
+}
+
+type Worker interface {
+	Do() error
+}
+
+type impl struct {
+	dep *dep
+}
+
+type dep struct{ name string }
+
+func (d *dep) run() error {
+	if d == nil {
+		// trying to signal error, but returns a *typed nil* hidden in interface
+		return &OpError{Op: "dep.run", Err: nil}
+	}
+	return nil
+}
+
+func NewWorker(d *dep) Worker { return &impl{dep: d} }
+
+func (i *impl) Do() error {
+	// returns typed-nil problem via interface
+	return i.dep.run()
+}
+```
+
+### What’s wrong?
+
+* Returning `&OpError{..., Err: nil}` is **non-nil** as a pointer, but it *wraps* a `nil` cause; tools that check `errors.Is(err, someSentinel)` may fail, and logs can be misleading.
+* Also, `Do()` should gracefully handle `i.dep == nil`.
+
+### Requirements
+
+* Introduce a **sentinel error** `var ErrNilDep = errors.New("nil dep")`.
+* Make `dep.run()` return `ErrNilDep` directly when `d == nil`.
+* Make `OpError` use `fmt.Errorf("%s: %w", op, err)` semantics (support `errors.Is/As`).
+* Ensure `Do()` returns a wrapped error like `op: %w` when the dep is nil or fails.
+* Preserve `Worker` interface and `NewWorker` signature.
+
+---
+
+Here’s the fixed, idiomatic version with a sentinel error, proper wrapping, and no typed-nil traps:
+
+```go
+package pit
+
+import (
+	"errors"
+	"fmt"
+)
+
+var ErrNilDep = errors.New("nil dep")
+
+type OpError struct {
+	Op  string
+	Err error
+}
+
+func (e *OpError) Error() string {
+	return fmt.Sprintf("%s: %v", e.Op, e.Err)
+}
+
+// Enable errors.Is / errors.As
+func (e *OpError) Unwrap() error { return e.Err }
+
+type Worker interface {
+	Do() error
+}
+
+type impl struct {
+	dep *dep
+}
+
+type dep struct{ name string }
+
+func (d *dep) run() error {
+	if d == nil {
+		// return a real, non-nil sentinel—no typed-nil wrapper
+		return ErrNilDep
+	}
+	return nil
+}
+
+func NewWorker(d *dep) Worker { return &impl{dep: d} }
+
+func (i *impl) Do() error {
+	// Handle nil dependency explicitly and wrap with operation context
+	if i.dep == nil {
+		return &OpError{Op: "impl.Do", Err: ErrNilDep}
+	}
+	if err := i.dep.run(); err != nil {
+		// Properly wrapped so errors.Is/As work
+		return &OpError{Op: "impl.Do", Err: err}
+	}
+	return nil
+}
+```
+
+### Why this fixes it
+
+* `ErrNilDep` is a **non-nil sentinel**; no more typed-nil hidden in an interface.
+* `OpError.Unwrap()` gives `%w` semantics, so `errors.Is(err, ErrNilDep)` and `errors.As(err, *target)` both work.
+* `Do()` never returns `<nil>` when there’s a failure; it wraps the underlying error with operation context.
+
+
+cool — **Step 16 · Problem 4: goroutine loop-capture, bounded concurrency, and cancellation**
+
+### The bug
+
+This pattern sometimes fetches the **wrong IDs**, races, and can leak goroutines if `ctx` is canceled mid-flight:
+
+```go
+for _, id := range ids {
+  go func() {
+    u, err := fetch(ctx, id) // ← captures loop var; may read wrong id
+    // ... write into shared map without sync ...
+  }()
+}
+```
+
+### Task
+
+Implement a safe, bounded, cancel-aware bulk fetch:
+
+```go
+// FetchAllUsers concurrently fetches users for ids with at most 'limit' in flight.
+// On first error, cancel the rest and return that error (no partial map).
+// Must avoid loop-capture bugs and data races.
+func FetchAllUsers(
+  ctx context.Context,
+  ids []int,
+  fetch func(context.Context, int) (User, error),
+  limit int,
+) (map[int]User, error)
+```
+
+#### Requirements
+
+* **No loop-capture bug** (don’t accidentally share the loop variable).
+* **Bounded concurrency**: at most `limit` fetches at once (if limit<=0, treat as 1).
+* **Context-aware**: cancel downstream work when any fetch fails.
+* **Race-free writes** to the result map.
+* Use `errgroup.WithContext` (preferred) and a small **semaphore channel** for the limit.
+
+#### Given
+
+```go
+type User struct {
+  ID   int
+  Name string
+}
+```
+
+---
+
+Here’s a clean, cancel-aware, bounded-concurrency implementation that avoids loop-capture bugs and returns **no partial map** on error:
+
+```go
+package pit
+
+import (
+	"context"
+	"sync"
+
+	"golang.org/x/sync/errgroup"
+)
+
+type User struct {
+	ID   int
+	Name string
+}
+
+// FetchAllUsers concurrently fetches users for ids with at most 'limit' in flight.
+// On first error, it cancels the rest and returns that error (no partial map).
+func FetchAllUsers(
+	ctx context.Context,
+	ids []int,
+	fetch func(context.Context, int) (User, error),
+	limit int,
+) (map[int]User, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+
+	g, ctx := errgroup.WithContext(ctx)       // cancels children on first error
+	sem := make(chan struct{}, limit)         // semaphore for bounded concurrency
+	results := make(map[int]User, len(ids))   // filled only if all succeed
+	var mu sync.Mutex
+
+LOOP:
+	for _, rawID := range ids {
+		id := rawID // fix loop-capture
+
+		// Respect cancellation while acquiring a slot
+		select {
+		case <-ctx.Done():
+			break LOOP
+		case sem <- struct{}{}:
+		}
+
+		g.Go(func() error {
+			defer func() { <-sem }()
+
+			u, err := fetch(ctx, id)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			results[id] = u
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	// Wait for all launched fetches. On any error, errgroup cancels ctx.
+	if err := g.Wait(); err != nil {
+		return nil, err // no partial map
+	}
+	return results, nil
+}
+```
+
+**Why this works**
+
+* **No loop-capture bug:** `id := rawID` per-iteration.
+* **Bounded concurrency:** buffered `sem` gates at most `limit` in flight.
+* **Cancellation:** `errgroup.WithContext` cancels remaining work on first error; acquire path also respects `ctx.Done()`.
+* **Race-free writes:** single `results` map guarded by `mu`.
+* **All-or-nothing:** returns `nil, err` on any failure; otherwise full results.
+sweet — **Step 16 · Problem 5: hidden memory retention (subslice / substring trap)**
+
+### The bug
+
+You read a huge file into memory, then return only a few lines. The current code slices the big buffer to build substrings, which keeps the **entire** backing array alive → high RSS, GC pressure.
+
+```go
+package pit
+
+import "bytes"
+
+// ExtractLines returns the first n lines as strings.
+func ExtractLines(b []byte, n int) []string {
+	lines := make([]string, 0, n)
+	for len(lines) < n {
+		i := bytes.IndexByte(b, '\n')
+		if i < 0 {
+			if len(b) == 0 { break }
+			lines = append(lines, string(b)) // ⚠️ holds onto whole backing array
+			break
+		}
+		lines = append(lines, string(b[:i])) // ⚠️ substring aliases big b
+		b = b[i+1:]
+	}
+	return lines
+}
+```
+
+### Task
+
+Fix `ExtractLines` so that:
+
+* Returned `[]string` **does not** retain the large original buffer.
+* Avoids unnecessary allocations (copy just what you need).
+* Keeps behavior identical (no trailing `\n` in lines).
+
+> Hint: force a **copy** when forming each string. For bytes→string, a common pattern is `string(append([]byte(nil), b[:i]...))`, which allocates exactly the needed slice and drops the big backing array.
+
+---
+Here’s the fixed version that **copies** each line’s bytes before turning them into a string, so the big input buffer isn’t retained:
+
+```go
+package pit
+
+import "bytes"
+
+// bsToStringCopy makes a string that doesn't alias the original backing array.
+func bsToStringCopy(b []byte) string {
+	return string(append([]byte(nil), b...))
+}
+
+// ExtractLines returns the first n lines as strings without retaining the big buffer.
+func ExtractLines(b []byte, n int) []string {
+	if n <= 0 || len(b) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, n)
+
+	for len(lines) < n && len(b) > 0 {
+		if i := bytes.IndexByte(b, '\n'); i >= 0 {
+			// copy only the line (excluding '\n')
+			lines = append(lines, bsToStringCopy(b[:i]))
+			b = b[i+1:]
+		} else {
+			// last chunk without trailing newline
+			lines = append(lines, bsToStringCopy(b))
+			break
+		}
+	}
+	return lines
+}
+```
+
+**Why this fixes it**
+
+* `bsToStringCopy` forces a new allocation per line, so returned strings don’t share the huge `b`’s backing array.
+* Behavior is unchanged: no trailing `\n` in lines; stops after `n` lines or end of input.
+* Only the bytes for each line are allocated—no extra copies or hidden retention.
+
+**Step 16 · Problem 6: timers, tickers & goroutine leaks**
+
+### The bug
+
+This retry loop leaks timers/goroutines and spikes allocations under load:
+
+```go
+package pit
+
+import (
+	"context"
+	"time"
+)
+
+func RetryUntil(ctx context.Context, fn func(context.Context) error, max int) error {
+	backoff := 100 * time.Millisecond
+	for attempt := 0; attempt < max; attempt++ {
+		if err := fn(ctx); err == nil {
+			return nil
+		}
+		// BUG: allocates a brand-new timer goroutine each time; cannot cancel early
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff): // ← leak-prone in loops
+		}
+		backoff *= 2
+	}
+	return context.DeadlineExceeded
+}
+```
+
+Also, this heartbeat loop leaks a ticker:
+
+```go
+func Heartbeat(ctx context.Context, do func()) {
+	t := time.NewTicker(1 * time.Second)
+	for {
+		select {
+		case <-ctx.Done():
+			return               // BUG: ticker never stopped
+		case <-t.C:
+			do()
+		}
+	}
+}
+```
+
+### Task
+
+Fix both functions so that:
+
+* **No leaks**: reuse a `time.Timer` for backoff (stop/drain before `Reset`), and **stop the ticker** on exit.
+* **Cancel-aware**: exit immediately on `ctx.Done()`.
+* **Backoff**: exponential with **cap** and **jitter** (±10%) to avoid thundering herd.
+* **Return semantics** stay the same for `RetryUntil`: success returns `nil`, otherwise `ctx.Err()` if canceled, else `context.DeadlineExceeded` after exhausting retries.
+
+**Cap & jitter details**
+
+* Cap backoff at, say, `2s`.
+* Jitter: randomize to `d - 10% … d + 10%` (use `math/rand` with `rand.Int63n`).
+
+---
+
+Here you go — leak-safe, cancel-aware, with capped exponential backoff + ±10% jitter:
+
+```go
+package pit
+
+import (
+	"context"
+	"math/rand"
+	"time"
+)
+
+var (
+	backoffStart = 100 * time.Millisecond
+	backoffCap   = 2 * time.Second
+	jitterFrac   = 0.10 // ±10%
+)
+
+// RetryUntil calls fn up to max times.
+// - Returns nil on first success.
+// - Returns ctx.Err() if the context is canceled at any point.
+// - After exhausting retries, returns context.DeadlineExceeded.
+// Uses a reusable time.Timer and adds capped exponential backoff with jitter.
+func RetryUntil(ctx context.Context, fn func(context.Context) error, max int) error {
+	if max <= 0 {
+		return context.DeadlineExceeded
+	}
+
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	backoff := backoffStart
+
+	// Single reusable timer; start stopped.
+	timer := time.NewTimer(time.Hour)
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+
+	for attempt := 0; attempt < max; attempt++ {
+		// Always check context first.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// Try once.
+		if err := fn(ctx); err == nil {
+			return nil
+		}
+		// If this was the last allowed attempt, break.
+		if attempt == max-1 {
+			break
+		}
+
+		// Wait with jittered, capped backoff (cancel-aware).
+		delay := jitter(r, capDuration(backoff, backoffCap), jitterFrac)
+
+		// Reset the timer safely.
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(delay)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			// continue to next attempt
+		}
+
+		// Exponential step
+		backoff *= 2
+	}
+
+	return context.DeadlineExceeded
+}
+
+func capDuration(d, cap time.Duration) time.Duration {
+	if d > cap {
+		return cap
+	}
+	return d
+}
+
+// jitter returns a duration in [d*(1-j), d*(1+j)]
+func jitter(r *rand.Rand, d time.Duration, j float64) time.Duration {
+	if d <= 0 || j <= 0 {
+		return d
+	}
+	lo := float64(d) * (1 - j)
+	span := float64(d) * (2 * j)
+	// Int63n avoids negative; convert to duration safely
+	n := r.Int63n(int64(span)) // 0 .. span-1
+	return time.Duration(lo + float64(n))
+}
+
+// Heartbeat ticks do() every second until ctx is done.
+// Properly stops the ticker to avoid leaks.
+func Heartbeat(ctx context.Context, do func()) {
+	t := time.NewTicker(1 * time.Second)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			do()
+		}
+	}
+}
+```
+nice — **Step 16 · Problem 7: method sets, pointer/value receivers & lost updates**
+
+### The bug
+
+We want a byte **counter** that implements `io.Writer` and accumulates total bytes written. This version “works” sometimes, but the count is often wrong—especially under concurrency.
+
+```go
+package pit
+
+import "io"
+
+type Counter uint64
+
+// BUG: value receiver => increments a copy; lost updates.
+// Also not safe for concurrent writes.
+func (c Counter) Write(p []byte) (int, error) {
+	c += Counter(len(p)) // modifies copy, caller’s c unchanged
+	return len(p), nil
+}
+
+func Use(w io.Writer) {
+	_ = w
+	// ... write into w from multiple goroutines ...
+}
+```
+
+### Task
+
+Fix it so that:
+
+* `Counter` correctly accumulates bytes across writes,
+* `Counter` **implements `io.Writer`** (ensure the right method set),
+* It is **safe for concurrent use** from multiple goroutines,
+* Provide helpers:
+  `func (c *Counter) Value() uint64` and `func (c *Counter) Reset()`.
+
+**Constraints**
+
+* Keep the exported type name `Counter`.
+* Don’t change `Use`’s signature; the counter must still be passable as an `io.Writer`.
+
+---
+
+Here’s a safe, correct, concurrency-ready `Counter` that implements `io.Writer` via a **pointer receiver**, using `atomic.Uint64` to avoid races:
+
+```go
+package pit
+
+import (
+	"io"
+	"sync/atomic"
+)
+
+// Counter accumulates the total number of bytes written.
+// It is safe for concurrent use.
+type Counter struct {
+	n atomic.Uint64
+}
+
+// Ensure *Counter implements io.Writer.
+var _ io.Writer = (*Counter)(nil)
+
+// Write adds len(p) to the counter atomically.
+func (c *Counter) Write(p []byte) (int, error) {
+	c.n.Add(uint64(len(p)))
+	return len(p), nil
+}
+
+// Value returns the current count.
+func (c *Counter) Value() uint64 {
+	return c.n.Load()
+}
+
+// Reset sets the counter back to zero.
+func (c *Counter) Reset() {
+	c.n.Store(0)
+}
+```
+
+### Notes
+
+* The **pointer receiver** is required so the method set matches `io.Writer` and updates aren’t lost.
+* `atomic.Uint64` provides lock-free, race-free increments and reads under concurrency.
+* Usage:
+
+  ```go
+  var c pit.Counter
+  // pass &c wherever an io.Writer is required
+  _, _ = io.WriteString(&c, "hello")
+  _, _ = io.WriteString(&c, "world")
+  fmt.Println(c.Value()) // 10
+  ```
