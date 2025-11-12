@@ -7107,3 +7107,4 @@ func (c *Counter) Reset() {
   _, _ = io.WriteString(&c, "world")
   fmt.Println(c.Value()) // 10
   ```
+
