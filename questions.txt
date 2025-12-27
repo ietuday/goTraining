@@ -1,0 +1,140 @@
+### 🧱 A. Go Basics (1–20)
+
+1. What are the main features of Go and why was it created?
+2. How do you declare variables in Go? Explain `var`, short declaration `:=`, and zero values.
+3. What are the basic data types in Go?
+4. What is the difference between `:=` and `var`?
+5. How do you declare constants in Go? What is an *untyped* constant?
+6. What is a rune in Go? How is it different from `byte`?
+7. How are arrays different from slices?
+8. How do you create a slice from an array or another slice?
+9. What is the length vs capacity (`len` vs `cap`) of a slice?
+10. How does `append` work internally for slices?
+11. How do you copy one slice to another? What happens if capacity is smaller?
+12. What is a map in Go? How do you declare, initialize, and use it?
+13. How do you check if a key exists in a map?
+14. Are maps safe for concurrent use by default?
+15. How do you delete a key from a map?
+16. What is the blank identifier `_` used for?
+17. Explain the `init()` function. When is it called? How many can you have?
+18. What are the rules for exporting identifiers from a package?
+19. How does Go handle errors compared to exceptions in other languages?
+20. What is a `struct` in Go, and how do you create and use one?
+
+---
+
+### 📦 B. Packages, Modules & Build System (21–30)
+
+21. What is the purpose of the `main` package and `main()` function?
+22. How do you create and use custom packages in Go?
+23. What is a Go module (`go.mod`)? How do you initialize one?
+24. Explain the `GO111MODULE` and current module behavior (high level).
+25. How do you manage external dependencies using `go get`?
+26. What does `go build` do vs `go run` vs `go install`?
+27. What is `GOPATH` and how is it used nowadays?
+28. How do you vendor dependencies in Go?
+29. What are build tags and how do you use them?
+30. How do you cross-compile a Go binary for a different OS/architecture?
+
+---
+
+### 🧠 C. Functions, Methods & Interfaces (31–45)
+
+31. How do you define a function in Go? What is multiple return value support?
+32. What are named return values? When would you use them?
+33. What are variadic functions? Give an example.
+34. What is the difference between a function and a method in Go?
+35. How do you attach a method to a type? Can you attach a method to a non-local type?
+36. Explain pointer receivers vs value receivers. When to use which?
+37. What is an interface in Go? How is it different from interfaces in Java?
+38. How does Go achieve polymorphism using interfaces?
+39. What is an *empty interface* (`interface{}`)? When is it used?
+40. Explain type assertion and the “comma ok” idiom.
+41. What is a type switch and how is it used?
+42. Can a struct implement multiple interfaces? How?
+43. What are embedded types (anonymous fields) in a struct? Why are they useful?
+44. How can embedding be used to simulate inheritance or composition?
+45. What are the pros and cons of using `interface{}` heavily?
+
+---
+
+### ⏱️ D. Concurrency & Goroutines (46–65)
+
+46. What is a goroutine? How do you start one?
+47. How much memory does a goroutine roughly start with? Why is that useful?
+48. Explain the difference between concurrency and parallelism.
+49. What is a channel in Go? How do you create and use one?
+50. What is the difference between buffered and unbuffered channels?
+51. How does an unbuffered channel synchronize goroutines?
+52. What happens if you send on a channel that no one is receiving from, and vice versa?
+53. How do you close a channel? What happens after it’s closed?
+54. How do you check if a channel is closed while receiving?
+55. Explain the `select` statement in Go with an example.
+56. What is a “default” case in `select` and why is it useful?
+57. How do you avoid goroutine leaks? Give examples of common patterns.
+58. What are common patterns to cancel goroutines? (e.g., done channel, context)
+59. What is the `sync.WaitGroup` and how to use it?
+60. Explain `sync.Mutex` and `sync.RWMutex`. When would you use each?
+61. What is `sync.Once` used for?
+62. What is the `race` detector and how do you use it?
+63. Explain worker pools in Go and how you would implement one.
+64. How do you handle timeouts in goroutines (e.g., with `context` or `time.After`)?
+65. Give an example where channels are better than mutexes, and vice versa.
+
+---
+
+### 🧬 E. Memory, Pointers & GC (66–75)
+
+66. What is a pointer in Go? How do you declare and use it?
+67. What is the difference between passing by value and passing by pointer in Go?
+68. What does `new` do vs `make`? When should you use each?
+69. Which types require `make` and which can use `new` or literal syntax?
+70. How does Go’s garbage collector work at a high level?
+71. What are stack vs heap allocations? How does escape analysis affect this?
+72. How can you reduce allocations in performance-critical code?
+73. What is `unsafe` package? When (if ever) is it appropriate to use it?
+74. Why is it generally safe to return the address of a local variable from a function?
+75. How do you detect memory leaks or excessive allocations in a Go program?
+
+---
+
+### 🧪 F. Testing, Benchmarking & Tooling (76–85)
+
+76. How do you write unit tests in Go? What is the naming convention?
+77. How do you run tests for a package or entire module?
+78. How do you write table-driven tests? Why are they popular in Go?
+79. How do you use `testing.T` and `testing.B`?
+80. How do you write benchmarks in Go?
+81. What is the purpose of `TestMain`?
+82. How do you check code coverage? How do you generate an HTML coverage report?
+83. What Go tools do you use for formatting, linting, and static analysis?
+84. What is `go vet` and `golangci-lint` (or similar linters) used for?
+85. How would you test concurrent code or code that uses goroutines?
+
+---
+
+### 🧱 G. Error Handling & Logging (86–92)
+
+86. How is error handling done in Go? Why did Go choose this style?
+87. What is the difference between returning `error` and panicking?
+88. When is it appropriate to use `panic` and `recover`?
+89. How do you wrap errors with additional context? (Go 1.13+ `%w`, `errors.Join`, etc.)
+90. How would you define custom error types and check for them?
+91. How do you handle logging in Go in production apps? Which libraries do you know?
+92. What are common patterns for centralized error handling in HTTP or gRPC services?
+
+---
+
+### 📡 H. HTTP, Context & Real-World Stuff (93–100)
+
+93. What is the `context` package used for? Why is it important?
+94. How do you pass `context.Context` through your application properly?
+95. How do you create a simple HTTP server in Go?
+96. How do you handle timeouts and cancellations in HTTP handlers and clients?
+97. How do you structure a medium-sized Go project (folders, layers, etc.)?
+98. How do you manage configuration in Go (env vars, flags, config files)?
+99. What are some common pitfalls when using goroutines in web servers?
+100. What are some good practices you follow when writing production Go code?
+
+---
+
