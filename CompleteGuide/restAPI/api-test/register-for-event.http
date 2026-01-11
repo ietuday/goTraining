@@ -1,0 +1,14 @@
+@baseUrl = http://localhost:8080
+
+###
+# Paste token here (WITHOUT quotes)
+@token = paste_token_here
+
+###
+# Event Id
+@eventId = 1
+
+###
+# Register for an event (Authenticated user)
+POST {{baseUrl}}/events/{{eventId}}/register
+Authorization: Bearer {{token}}

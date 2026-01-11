@@ -1,0 +1,14 @@
+@baseUrl = http://localhost:8080
+
+###
+# Paste token here (WITHOUT quotes) - must be OWNER token
+@token = paste_owner_token_here
+
+###
+# Event Id (must be owned by the token user)
+@eventId = 1
+
+###
+# Unregister (Owner route as defined: DELETE /events/:id/registrations)
+DELETE {{baseUrl}}/events/{{eventId}}/registrations
+Authorization: Bearer {{token}}
