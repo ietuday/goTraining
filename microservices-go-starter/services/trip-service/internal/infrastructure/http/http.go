@@ -13,7 +13,7 @@ type HttpHandler struct {
 }
 
 type previewTripRequest struct {
-	UserID      string           `json:"user_id"`
+	UserID      string           `json:"userID"`
 	Pickup      types.Coordinate `json:"pickup"`
 	Destination types.Coordinate `json:"destination"`
 }
@@ -24,10 +24,11 @@ func (s *HttpHandler) HandleTripPreview(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "failed to parse JSON data", http.StatusBadRequest)
 		return
 	}
-	
+
 	ctx := r.Context()
 
-	t, err := s.Service.GetRoute(ctx, &reqBody.Pickup, &reqBody.Destination)
+	// CHANGE THE LAST ARG TO "FALSE" if the OSRM API is not working right now
+	t, err := s.Service.GetRoute(ctx, &reqBody.Pickup, &reqBody.Destination, true)
 	if err != nil {
 		log.Println(err)
 	}
