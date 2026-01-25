@@ -17,7 +17,7 @@ import (
 var GrpcAddr = ":9093"
 
 func main() {
-	inmemRepo := repository.NewInMemRepository()
+	inmemRepo := repository.NewInmemRepository()
 	svc := service.NewService(inmemRepo)
 
 	ctx, cancel := context.WithCancel(context.Background())
