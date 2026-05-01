@@ -1,0 +1,21 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8001:8000"
+    environment:
+      PORT: 8000
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DATABASE: bookstore
+    depends_on:
+      - mongo
+
+  mongo:
+    image: mongo:8.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  mongo-data:
